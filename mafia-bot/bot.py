@@ -8,6 +8,7 @@ from telegram.ext import (
 from handlers import (
     cmd_start,
     cmd_rules,
+    cmd_roles,
     cmd_newgame,
     cmd_join,
     cmd_leave,
@@ -31,13 +32,14 @@ logger = logging.getLogger(__name__)
 def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
-        raise RuntimeError("TELEGRAM_BOT_TOKEN environment variable is not set.")
+        raise RuntimeError("TELEGRAM_BOT_TOKEN muhit o'zgaruvchisi o'rnatilmagan.")
 
     app = Application.builder().token(token).build()
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_start))
     app.add_handler(CommandHandler("rules", cmd_rules))
+    app.add_handler(CommandHandler("roles", cmd_roles))
     app.add_handler(CommandHandler("newgame", cmd_newgame))
     app.add_handler(CommandHandler("join", cmd_join))
     app.add_handler(CommandHandler("leave", cmd_leave))
@@ -49,7 +51,7 @@ def main():
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CallbackQueryHandler(handle_callback))
 
-    logger.info("Mafia bot starting...")
+    logger.info("Mafiya boti ishga tushmoqda...")
     app.run_polling(allowed_updates=["message", "callback_query"])
 
 
