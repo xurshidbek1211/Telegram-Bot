@@ -1,36 +1,51 @@
-# [Project name]
+# Mafia Game Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A Telegram group chat bot that runs a full Mafia party game with roles, night/day phases, voting, and game statistics.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- `cd mafia-bot && python bot.py` — run the Telegram bot (managed via the "Mafia Bot" workflow)
+- Required env: `TELEGRAM_BOT_TOKEN` — Telegram bot token from @BotFather
 
 ## Stack
 
-- pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Python 3.11
+- python-telegram-bot (v20+, async)
+- JSON file for persistent game statistics
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `mafia-bot/bot.py` — entry point, registers all command and callback handlers
+- `mafia-bot/handlers.py` — all game logic and Telegram handler functions
+- `mafia-bot/game.py` — Game, Player, Role, Phase data models and game logic
+- `mafia-bot/stats.py` — persistent stats load/save (stats.json)
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- All game state is held in-memory (a dict keyed by chat_id). Bot restarts reset active games.
+- Night actions use inline keyboard callbacks sent to players via private DM.
+- Role distribution scales with player count (see `ROLE_DISTRIBUTION` in game.py).
+- Stats are persisted to `mafia-bot/stats.json` after each completed game.
+- The bot uses python-telegram-bot's `run_polling` — no webhook setup needed.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Players use /newgame in a group to open a lobby, /join to join, then /startgame to begin. Roles are assigned privately. Night phases send action prompts via DM. Day phases open group discussion and private voting. The game continues until Mafia or Citizens win.
+
+## Bot Commands
+
+| Command | Description |
+|---|---|
+| /newgame | Start a new game lobby |
+| /join | Join the current lobby |
+| /leave | Leave the lobby |
+| /players | Show player list and status |
+| /startgame | Begin the game (admin) |
+| /vote | Open day voting |
+| /endvote | Tally votes and resolve |
+| /endgame | Force-end the game (admin) |
+| /stats | Show win/loss statistics |
+| /rules | Show game rules |
 
 ## User preferences
 
@@ -38,8 +53,6 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- Players must start a private chat with the bot before playing — otherwise DMs for role/night actions will fail silently.
+- `TELEGRAM_BOT_TOKEN` must be set in Replit Secrets.
+- Bot restarts reset all in-progress game state.
