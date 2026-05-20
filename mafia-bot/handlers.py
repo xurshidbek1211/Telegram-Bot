@@ -887,6 +887,56 @@ async def cmd_shop(msg: Message):
     )
 
 
+@router.message(Command("buy"))
+async def cmd_buy(msg: Message):
+    parts = msg.text.split()
+    if len(parts) < 2:
+        items_list = "\n".join(
+            f"  `buy {key}` — {em} {name} ({price}{'💵' if cur == 'dollar' else '💎'})"
+            for key, (em, name, cur, price, _) in SHOP_ITEMS.items()
+        )
+        return await msg.answer(
+            f"❌ Item nomi kiriting. Mavjud mahsulotlar:\n\n{items_list}"
+        )
+
+    key = parts[1].lower()
+    item = SHOP_ITEMS.get(key)
+    if not item:
+        return await msg.answer(
+            f"❌ *{key}* — bunday item yo'q.\n\n"
+            "Mavjud itemlar: " + ", ".join(f"`{k}`" for k in SHOP_ITEMS)
+        )
+
+    em, name, currency, price, field = item
+    uid = msg.from_user.id
+    p = get_profile(uid, msg.from_user.first_name)
+
+    if currency == "dollar":
+        if p.dollar < price:
+            return await msg.answer(
+                f"❌ Yetarli dollar yo'q!\n{em} *{name}* — {price}💵\nSizda: *{p.dollar}$*"
+            )
+        p.dollar -= price
+    else:
+        if not p.infinite_diamond and p.diamond < price:
+            return await msg.answer(
+                f"❌ Yetarli olmos yo'q!\n{em} *{name}* — {price}💎\nSizda: *{p.diamond}💎*"
+            )
+        if not p.infinite_diamond:
+            p.diamond -= price
+
+    setattr(p, field, getattr(p, field) + 1)
+    save_profile(p)
+
+    diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
+    await msg.answer(
+        f"✅ {em} *{name}* sotib olindi!\n\n"
+        f"💵 Qolgan dollar: *{p.dollar}$*\n"
+        f"💎 Qolgan olmos: *{diamond_str}*\n\n"
+        f"Barcha xaridlar: /shop"
+    )
+
+
 @router.callback_query(F.data.startswith("shop_buy:"))
 async def cb_shop_buy(call: CallbackQuery):
     key = call.data.split(":")[1]
