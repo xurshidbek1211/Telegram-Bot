@@ -1,0 +1,255 @@
+import asyncio
+import random
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+TOKEN = "YOUR_BOT_TOKEN"
+
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
+
+games = {}
+votes = {}
+
+NIGHT = 30
+DAY = 30
+VOTE = 30
+
+# ---------------- UI ----------------
+
+def join_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎮 Qo‘shilish", callback_data="join")],
+            [InlineKeyboardButton(text="👥 O‘yinchilar", callback_data="players")]
+        ]
+    )
+
+def vote_kb(players):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"👤 {p}", callback_data=f"vote_{p}")]
+            for p in players
+        ]
+    )
+
+# ---------------- START ----------------
+
+@dp.message(F.text == "/start")
+async def start(msg: types.Message):
+    chat = msg.chat.id
+
+    if chat not in games:
+        games[chat] = {
+            "players": [],
+            "alive": [],
+            "roles": {},
+            "actions": {},
+            "immune": set()
+        }
+
+    await msg.answer("🎮 RO‘YXAT BOSHLANDI!", reply_markup=join_kb())
+
+# ---------------- JOIN ----------------
+
+@dp.callback_query(F.data == "join")
+async def join(call: types.CallbackQuery):
+    game = games[call.message.chat.id]
+    uid = call.from_user.id
+
+    if uid in game["players"]:
+        return await call.answer("❌ Allaqachon o‘yindasiz", show_alert=True)
+
+    game["players"].append(uid)
+
+    await bot.send_message(uid, "✅ Siz o‘yinga qo‘shildingiz!")
+    await call.answer()
+
+# ---------------- START GAME ----------------
+
+@dp.message(F.text == "/startgame")
+async def startgame(msg: types.Message):
+    game = games[msg.chat.id]
+
+    if len(game["players"]) < 4:
+        return await msg.answer("❌ Kamida 4 o‘yinchi kerak!")
+
+    game["alive"] = game["players"].copy()
+    game["roles"] = assign_roles(game["players"])
+    game["immune"] = set()
+
+    await msg.answer("🟢 O‘YIN BOSHLANDI!")
+
+    for u, r in game["roles"].items():
+        try:
+            await bot.send_message(u, f"🎭 ROL: {r}")
+        except:
+            pass
+
+    await night_phase(msg.chat.id)
+
+# ---------------- 25 ROLE ENGINE ----------------
+
+def assign_roles(players):
+    roles = {}
+    random.shuffle(players)
+
+    pool = [
+        "🔫 Don",
+        "💉 Doctor",
+        "🕵️ Detective",
+        "👮 Sergeant",
+        "🤡 Joker",
+        "☠️ Bomber",
+        "🐺 Beast",
+        "🔪 Killer",
+        "🧙 Wizard",
+        "👤 Citizen",
+        "👤 Citizen",
+        "👤 Citizen",
+        "🤞 Lucky",
+        "🧑‍💼 Journalist"
+    ]
+
+    for i, p in enumerate(players):
+        roles[p] = pool[i % len(pool)]
+
+    return roles
+
+# ---------------- NIGHT ----------------
+
+async def night_phase(chat_id):
+    game = games[chat_id]
+    game["actions"] = {}
+
+    await bot.send_message(chat_id, "🌙 TUN BOSHLANDI (30s)")
+
+    await asyncio.sleep(NIGHT)
+
+    await resolve_night(chat_id)
+
+# ---------------- ACTION SYSTEM ----------------
+
+@dp.message()
+async def actions(msg: types.Message):
+    for chat, game in games.items():
+        if msg.from_user.id in game["alive"]:
+            t = msg.text.lower()
+
+            if t.startswith("kill"):
+                game["actions"][msg.from_user.id] = ("kill", int(t.split()[1]))
+
+            if t.startswith("save"):
+                game["actions"][msg.from_user.id] = ("save", int(t.split()[1]))
+
+            if t.startswith("immune"):
+                game["immune"].add(int(t.split()[1]))
+
+# ---------------- NIGHT RESOLVE GOD LOGIC ----------------
+
+async def resolve_night(chat_id):
+    game = games[chat_id]
+
+    kill = None
+    save = None
+
+    for u, a in game["actions"].items():
+        role = game["roles"][u]
+
+        if "Don" in role or "Killer" in role:
+            kill = a[1]
+
+        if "Doctor" in role:
+            save = a[1]
+
+        if "Bomber" in role:
+            game["immune"].add(u)
+
+    dead = None
+
+    if kill and kill != save and kill not in game["immune"]:
+        dead = kill
+        if dead in game["alive"]:
+            game["alive"].remove(dead)
+
+    await bot.send_message(chat_id, f"🌅 TUN TUGADI\n💀 O‘ldi: {dead}")
+
+    await check_win(chat_id)
+
+    await day_phase(chat_id)
+
+# ---------------- DAY ----------------
+
+async def day_phase(chat_id):
+    await bot.send_message(chat_id, "☀️ KUN BOSHLANDI (30s)")
+
+    await asyncio.sleep(DAY)
+
+    await vote_phase(chat_id)
+
+# ---------------- VOTE ----------------
+
+async def vote_phase(chat_id):
+    game = games[chat_id]
+    votes.clear()
+
+    await bot.send_message(
+        chat_id,
+        "🗳 OVOZ BERING",
+        reply_markup=vote_kb(game["alive"])
+    )
+
+    await asyncio.sleep(VOTE)
+
+    await resolve_vote(chat_id)
+
+# ---------------- VOTE HANDLER ----------------
+
+@dp.callback_query(F.data.startswith("vote_"))
+async def vote(call: types.CallbackQuery):
+    uid = call.from_user.id
+    target = int(call.data.split("_")[1])
+
+    if uid in votes:
+        return await call.answer("❌ Ovoz berilgan", show_alert=True)
+
+    votes[uid] = target
+    await call.answer("🗳 Qabul qilindi")
+
+# ---------------- VOTE RESOLVE ----------------
+
+async def resolve_vote(chat_id):
+    if not votes:
+        return
+
+    target = max(set(votes.values()), key=list(votes.values()).count)
+
+    game = games[chat_id]
+
+    if target in game["alive"]:
+        game["alive"].remove(target)
+
+    await bot.send_message(chat_id, f"💀 OSHILDI: {target}")
+
+    await check_win(chat_id)
+
+    await night_phase(chat_id)
+
+# ---------------- WIN SYSTEM ----------------
+
+async def check_win(chat_id):
+    game = games[chat_id]
+
+    mafia_alive = any("Don" in game["roles"][p] for p in game["alive"])
+
+    if not mafia_alive:
+        await bot.send_message(chat_id, "🎉 FUQAROLAR YUTDI!")
+        games.pop(chat_id, None)
+
+# ---------------- RUN ----------------
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
