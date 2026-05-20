@@ -937,6 +937,13 @@ async def cmd_buy(msg: Message):
     )
 
 
+@router.callback_query(F.data.startswith("buy_"))
+async def cb_buy_prefix(call: CallbackQuery):
+    key = call.data.removeprefix("buy_")
+    call.data = f"shop_buy:{key}"
+    await cb_shop_buy(call)
+
+
 @router.callback_query(F.data.startswith("shop_buy:"))
 async def cb_shop_buy(call: CallbackQuery):
     key = call.data.split(":")[1]
