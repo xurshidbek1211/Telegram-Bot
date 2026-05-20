@@ -1,0 +1,147 @@
+# ---------------- ROLE SHOP UI ----------------
+
+def role_shop_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+
+            [
+                InlineKeyboardButton(
+                    text="🔫 Don — 2💎",
+                    callback_data="role_Don"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="🔪 Qotil — 2💎",
+                    callback_data="role_Killer"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="⛏ Konchi — 2💎",
+                    callback_data="role_Konchi"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="💉 Doctor — 1💎",
+                    callback_data="role_Doctor"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="🕵️ Detective — 1💎",
+                    callback_data="role_Detective"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="🤡 Joker — 1💎",
+                    callback_data="role_Joker"
+                )
+            ],
+
+            [
+                InlineKeyboardButton(
+                    text="🐺 Beast — 1💎",
+                    callback_data="role_Beast"
+                )
+            ]
+        ]
+    )
+
+# ---------------- ROLE SHOP COMMAND ----------------
+
+@dp.message(F.text == "/roles")
+async def roles(msg: types.Message):
+
+    await msg.answer(
+        "🃏 FAOL ROLLAR DO‘KONI\n\nKerakli rolni tanlang:",
+        reply_markup=role_shop_kb()
+    )
+
+# ---------------- BUY ROLE ----------------
+
+@dp.callback_query(F.data.startswith("role_"))
+async def buy_role(call: types.CallbackQuery):
+
+    uid = call.from_user.id
+
+    create_profile(uid)
+
+    p = profiles[uid]
+
+    role = call.data.replace("role_", "")
+
+    prices = {
+
+        "Don": 2,
+
+        "Killer": 2,
+
+        "Konchi": 2,
+
+        "Doctor": 1,
+
+        "Detective": 1,
+
+        "Joker": 1,
+
+        "Beast": 1
+    }
+
+    names = {
+
+        "Don": "🔫 Don",
+
+        "Killer": "🔪 Qotil",
+
+        "Konchi": "⛏ Konchi",
+
+        "Doctor": "💉 Doctor",
+
+        "Detective": "🕵️ Detective",
+
+        "Joker": "🤡 Joker",
+
+        "Beast": "🐺 Beast"
+    }
+
+    if role not in prices:
+
+        return await call.answer(
+            "❌ Rol topilmadi",
+            show_alert=True
+        )
+
+    price = prices[role]
+
+    if not p["infinite_diamond"]:
+
+        if p["diamond"] < price:
+
+            return await call.answer(
+                "❌ Olmos yetarli emas",
+                show_alert=True
+            )
+
+        p["diamond"] -= price
+
+    if role not in p["active_roles"]:
+
+        p["active_roles"].append(role)
+
+    await call.answer(
+        "✅ Rol sotib olindi!",
+        show_alert=True
+    )
+
+    await bot.send_message(
+        uid,
+        f"🃏 Siz {names[role]} rolini sotib oldingiz!"
+    )

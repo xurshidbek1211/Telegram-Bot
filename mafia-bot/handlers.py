@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 from aiogram import Router, Bot, F
 from aiogram.filters import Command
 from aiogram.types import (
@@ -10,11 +11,13 @@ from aiogram.types import (
 from game import Game, Phase, Role, MIN_PLAYERS, ROLE_EMOJIS, ROLE_DESCRIPTIONS_UZ, MAFIA_TEAM
 from stats import load_stats, save_stats
 from night import resolve_night
+from profiles import get_profile, save_profile, transfer_diamond, record_game_start, record_win, add_dollar, add_diamond
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 games: dict[int, Game] = {}
+mine_sessions: dict[int, dict] = {}
 
 NIGHT_SECS = 30
 DAY_SECS   = 30
@@ -308,9 +311,33 @@ async def _end_game(bot: Bot, game: Game, winner: str):
         f"{ROLE_EMOJIS.get(p.role,'')} {ROLE_NAMES_UZ.get(p.role,'')}"
         for p in game.players.values() if p.role
     )
+
+    reward_lines = []
+    if winner == "citizens":
+        survivors = [p for p in game.players.values() if p.alive]
+        for p in survivors:
+            record_win(p.user_id, dollar_reward=40)
+        if survivors:
+            names = ", ".join(p.display_name for p in survivors)
+            reward_lines.append(f"💵 *Tirik qolganlar (+40$):* {names}")
+    elif winner == "mafia":
+        for p in game.alive_mafia_team():
+            record_win(p.user_id, dollar_reward=60)
+        mafia_alive = game.alive_mafia_team()
+        if mafia_alive:
+            names = ", ".join(p.display_name for p in mafia_alive)
+            reward_lines.append(f"💵 *Mafiya g'oliblari (+60$):* {names}")
+    elif winner == "qotil":
+        q = game.get_alive_by_role(Role.QOTIL)
+        if q:
+            record_win(q.user_id, dollar_reward=80)
+            reward_lines.append(f"💵 *Qotil g'olib (+80$):* {q.display_name}")
+
+    reward_text = "\n" + "\n".join(reward_lines) if reward_lines else ""
+
     await bot.send_message(
         game.chat_id,
-        f"{em} *O'YIN TUGADI!*\n\n{text}\n\n*Yakuniy rollar:*\n{role_list}\n\n"
+        f"{em} *O'YIN TUGADI!*\n\n{text}\n\n*Yakuniy rollar:*\n{role_list}{reward_text}\n\n"
         "Yana o'ynash uchun /newgame!",
     )
 
@@ -634,6 +661,9 @@ async def cmd_startgame(msg: Message, bot: Bot):
     game.assign_roles()
     game.day_number = 1
 
+    for player in game.players.values():
+        record_game_start(player.user_id, player.first_name)
+
     counts: dict = {}
     for p in game.players.values():
         counts[p.role] = counts.get(p.role, 0) + 1
@@ -697,6 +727,145 @@ async def cmd_stats(msg: Message):
         f"🏆 Fuqarolar g'alabasi: *{stats.citizen_wins}* ({cp}%)\n"
         f"🔪 Mafiya g'alabasi: *{stats.mafia_wins}* ({mp}%)\n"
     )
+
+
+@router.message(Command("profile"))
+async def cmd_profile(msg: Message):
+    user = msg.from_user
+    p = get_profile(user.id, user.first_name)
+    diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
+    win_rate = f"{round(p.wins / p.games * 100)}%" if p.games > 0 else "—"
+
+    items = []
+    if p.shield:       items.append(f"🛡 Himoya: {p.shield}")
+    if p.documents:    items.append(f"📁 Hujjat: {p.documents}")
+    if p.hang_protect: items.append(f"⚖️ Osishdan himoya: {p.hang_protect}")
+    if p.killer_protect: items.append(f"⛑️ Qotildan himoya: {p.killer_protect}")
+    if p.gun:          items.append(f"🔫 Miltiq: {p.gun}")
+    if p.drug_protect: items.append(f"💊 Doridan himoya: {p.drug_protect}")
+    if p.mask:         items.append(f"🎭 Maska: {p.mask}")
+    if p.slip_protect: items.append(f"🪤 Sirpanishdan himoya: {p.slip_protect}")
+    if p.hero_protect: items.append(f"🔰 Geroydan himoya: {p.hero_protect}")
+    if p.mines:        items.append(f"💣 Minalar: {p.mines}")
+    items_str = "\n".join(items) if items else "  Hech narsa yo'q"
+
+    roles_str = ", ".join(p.active_roles) if p.active_roles else "Yo'q"
+
+    await msg.answer(
+        f"👤 *{user.first_name}*\n\n"
+        f"💵 Dollar: *{p.dollar}$*\n"
+        f"💎 Olmos: *{diamond_str}*\n\n"
+        f"🎯 G'alabalar: *{p.wins}*\n"
+        f"🎲 Jami o'yinlar: *{p.games}*\n"
+        f"📈 G'alaba foizi: *{win_rate}*\n\n"
+        f"🎒 *Inventar:*\n{items_str}\n\n"
+        f"🃏 Faol rollar: {roles_str}"
+    )
+
+
+@router.message(Command("give"))
+async def cmd_give(msg: Message):
+    if not msg.reply_to_message:
+        return await msg.answer("❌ Kimga berishni ko'rsating — xabariga reply qiling.")
+
+    giver = msg.from_user
+    target_user = msg.reply_to_message.from_user
+    if target_user.is_bot:
+        return await msg.answer("❌ Botga olmos berish mumkin emas.")
+    if giver.id == target_user.id:
+        return await msg.answer("❌ O'zingizga bera olmaysiz.")
+
+    parts = msg.text.split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        return await msg.answer("❌ Miqdor kiriting. Masalan: `/give 50` (reply bilan)")
+
+    amount = int(parts[1])
+    if amount <= 0:
+        return await msg.answer("❌ Miqdor musbat son bo'lishi kerak.")
+
+    get_profile(target_user.id, target_user.first_name)
+    ok = transfer_diamond(giver.id, target_user.id, amount)
+    if not ok:
+        giver_p = get_profile(giver.id)
+        return await msg.answer(
+            f"❌ Yetarli olmos yo'q. Sizda: *{giver_p.diamond}* 💎"
+        )
+
+    await msg.answer(
+        f"💎 *{giver.first_name}* → *{target_user.first_name}*\n"
+        f"*{amount}* olmos o'tkazildi!"
+    )
+
+
+@router.message(Command("kick"))
+async def cmd_kick(msg: Message, bot: Bot):
+    if msg.chat.type == "private":
+        return await msg.answer("⚠️ Bu buyruq faqat guruhda ishlaydi.")
+
+    chat_id = msg.chat.id
+    member = await bot.get_chat_member(chat_id, msg.from_user.id)
+    if member.status not in ("administrator", "creator"):
+        return await msg.answer("⚠️ Faqat adminlar /kick ishlatishi mumkin.")
+
+    if not msg.reply_to_message:
+        return await msg.answer("❌ Kimni chiqarishni ko'rsating — xabariga reply qiling.")
+
+    target = msg.reply_to_message.from_user
+    game = games.get(chat_id)
+    if not game or game.phase == Phase.ENDED:
+        return await msg.answer("⚠️ Faol o'yin yo'q.")
+
+    if target.id not in game.players:
+        return await msg.answer(f"⚠️ *{target.first_name}* bu o'yinda emas.")
+
+    if game.phase == Phase.LOBBY:
+        game.remove_player(target.id)
+        await msg.answer(f"👢 *{target.first_name}* lobbydan chiqarildi.")
+    else:
+        game.eliminate_player(target.id)
+        tp = game.get_player_by_id(target.id)
+        role_str = ""
+        if tp and tp.role:
+            role_str = f" Roli: {ROLE_EMOJIS.get(tp.role,'')} {ROLE_NAMES_UZ.get(tp.role,'')}"
+        await msg.answer(f"👢 *{target.first_name}* admin tomonidan chiqarildi.{role_str}")
+        winner = game.check_win_condition()
+        if winner:
+            asyncio.create_task(_end_game(bot, game, winner))
+
+
+@router.message(Command("mine"))
+async def cmd_mine(msg: Message):
+    uid = msg.from_user.id
+    nums = list(range(1, 11))
+    diamond_slots = set(random.sample(nums, 3))
+    mine_slots = set(random.sample([x for x in nums if x not in diamond_slots], 2))
+    rewards = {}
+    for n in nums:
+        if n in diamond_slots:
+            rewards[n] = ("diamond", random.randint(1, 3))
+        elif n in mine_slots:
+            rewards[n] = ("mine", 0)
+        else:
+            rewards[n] = ("money", random.randint(100, 500))
+
+    mine_sessions[uid] = rewards
+
+    buttons = [
+        InlineKeyboardButton(text=str(n), callback_data=f"mine_pick:{n}")
+        for n in nums
+    ]
+    kb = InlineKeyboardMarkup(inline_keyboard=[buttons[:5], buttons[5:]])
+
+    await msg.answer(
+        "⛏️ *MINE O'YINI*\n\n"
+        "10 ta raqam ichida:\n"
+        "💎 3 ta olmos slot\n"
+        "💣 2 ta mina slot\n"
+        "💵 5 ta dollar slot\n\n"
+        "Bir raqam tanlang:",
+        reply_markup=kb,
+    )
+
 
 # ──────────────────────────────────────────────
 # Callback handlers
@@ -1030,3 +1199,47 @@ async def cb_afsungar_revenge(call: CallbackQuery):
 
     game.day_number += 1
     asyncio.create_task(run_night(call.bot, game.chat_id))
+
+
+@router.callback_query(F.data.startswith("mine_pick:"))
+async def cb_mine_pick(call: CallbackQuery):
+    uid = call.from_user.id
+    rewards = mine_sessions.get(uid)
+    if not rewards:
+        return await call.answer("⚠️ O'yin topilmadi. /mine bilan yangi o'yin boshlang.", show_alert=True)
+
+    num = int(call.data.split(":")[1])
+    typ, amount = rewards[num]
+    del mine_sessions[uid]
+
+    p = get_profile(uid, call.from_user.first_name)
+
+    if typ == "diamond":
+        add_diamond(uid, amount)
+        result = f"💎 *{amount} olmos* topdingiz!"
+        detail = f"Umumiy olmos: {p.diamond + amount} 💎"
+    elif typ == "money":
+        add_dollar(uid, amount)
+        result = f"💵 *{amount}$* topdingiz!"
+        detail = f"Umumiy dollar: {p.dollar + amount}$"
+    else:
+        p.mines += 1
+        save_profile(p)
+        result = "💣 *MINAGA TUSHDINGIZ!*"
+        detail = f"Minalar soni: {p.mines} 💣"
+
+    all_labels = {
+        "diamond": "💎", "money": "💵", "mine": "💣"
+    }
+    revealed = " ".join(
+        f"[{all_labels[rewards[n][0]]}]" if n == num else f"[{n}]"
+        for n in range(1, 11)
+    )
+
+    await call.message.edit_text(
+        f"⛏️ *MINE O'YINI*\n\n"
+        f"Siz *{num}*-raqamni tanladingiz.\n\n"
+        f"{result}\n_{detail}_\n\n"
+        f"{revealed}"
+    )
+    await call.answer(result.replace("*", ""))

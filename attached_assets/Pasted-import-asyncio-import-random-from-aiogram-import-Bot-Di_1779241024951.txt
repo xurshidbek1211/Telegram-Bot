@@ -1,0 +1,585 @@
+import asyncio
+import random
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+TOKEN = "YOUR_BOT_TOKEN"
+OWNER_ID = 123456789
+
+bot = Bot(token=TOKEN)
+dp = Dispatcher()
+
+games = {}
+profiles = {}
+votes = {}
+
+NIGHT = 30
+DAY = 30
+VOTE = 30
+
+# ---------------- PROFILE ----------------
+
+def create_profile(user_id):
+    if user_id not in profiles:
+        profiles[user_id] = {
+            "dollar": 0,
+            "diamond": 0,
+            "wins": 0,
+            "games": 0,
+
+            "shield": 0,
+            "documents": 0,
+            "hang_protect": 0,
+            "killer_protect": 0,
+            "gun": 0,
+            "drug_protect": 0,
+            "mask": 0,
+            "slip_protect": 0,
+            "hero_protect": 0,
+
+            "mines": 0,
+
+            "active_roles": [],
+
+            "infinite_diamond": False
+        }
+
+create_profile(OWNER_ID)
+profiles[OWNER_ID]["infinite_diamond"] = True
+
+# ---------------- UI ----------------
+
+def reg_kb():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🎮 Qo‘shilish", callback_data="join")],
+            [InlineKeyboardButton(text="👥 O‘yinchilar", callback_data="players")]
+        ]
+    )
+
+def vote_kb(players):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text=f"👤 {p}", callback_data=f"vote_{p}")]
+            for p in players
+        ]
+    )
+
+# ---------------- START ----------------
+
+@dp.message(F.text == "/start")
+async def start(msg: types.Message):
+    chat = msg.chat.id
+
+    if chat not in games:
+        games[chat] = {
+            "players": [],
+            "alive": [],
+            "roles": {},
+            "actions": {},
+            "phase": "reg",
+            "immune": set()
+        }
+
+    await msg.answer(
+        "🎮 RO‘YXATDAN O‘TISH BOSHLANDI!",
+        reply_markup=reg_kb()
+    )
+
+# ---------------- JOIN ----------------
+
+@dp.callback_query(F.data == "join")
+async def join(call: types.CallbackQuery):
+    game = games[call.message.chat.id]
+    uid = call.from_user.id
+
+    if uid in game["players"]:
+        return await call.answer(
+            "❌ Siz allaqachon o‘yindasiz",
+            show_alert=True
+        )
+
+    game["players"].append(uid)
+
+    create_profile(uid)
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔙 Guruhga qaytish",
+                    url="https://t.me"
+                )
+            ]
+        ]
+    )
+
+    await bot.send_message(
+        uid,
+        "✅ Siz o‘yinga qo‘shildingiz!",
+        reply_markup=kb
+    )
+
+    await call.answer("Qo‘shildingiz!")
+
+# ---------------- PLAYERS ----------------
+
+@dp.callback_query(F.data == "players")
+async def players(call: types.CallbackQuery):
+    game = games[call.message.chat.id]
+
+    text = "👥 O‘YINCHILAR:\n\n"
+
+    for i, p in enumerate(game["players"], 1):
+        text += f"{i}. {p}\n"
+
+    await call.message.answer(text)
+    await call.answer()
+
+# ---------------- PROFILE ----------------
+
+@dp.message(F.text == "/profile")
+async def profile(msg: types.Message):
+    uid = msg.from_user.id
+
+    create_profile(uid)
+
+    p = profiles[uid]
+
+    text = f"""
+👤 {msg.from_user.first_name}
+
+💵 Dollar: {p['dollar']}
+💎 Olmos: {"♾" if p['infinite_diamond'] else p['diamond']}
+
+🛡 Himoya: {p['shield']}
+📁 Hujjat: {p['documents']}
+⚖️ Osishdan himoya qilish: {p['hang_protect']}
+⛑️ Qotildan himoya: {p['killer_protect']}
+🔫 Miltiq: {p['gun']}
+💊 Doridan himoya: {p['drug_protect']}
+🎭 Maska: {p['mask']}
+🪤 Sirpanishdan himoya: {p['slip_protect']}
+🔰 Geroydan himoya: {p['hero_protect']}
+
+💣 Minalar: {p['mines']}
+
+🎯 G'alaba: {p['wins']}
+🎲 Barcha o'yinlar: {p['games']}
+
+🃏 Faol rollar:
+{"Yo'q" if not p['active_roles'] else ", ".join(p['active_roles'])}
+
+📢 Kanal:
+https://t.me/mehr_ila_yasha
+
+🎁 Kanalga obuna bo‘lsangiz sizga 2x mukofot beriladi!
+"""
+
+    await msg.answer(text)
+
+# ---------------- GIVE DIAMOND ----------------
+
+@dp.message(F.text.startswith("/give"))
+async def give(msg: types.Message):
+    if not msg.reply_to_message:
+        return await msg.answer("❌ Reply qiling")
+
+    giver = msg.from_user.id
+    target = msg.reply_to_message.from_user.id
+
+    create_profile(giver)
+    create_profile(target)
+
+    try:
+        amount = int(msg.text.split()[1])
+    except:
+        return await msg.answer("❌ Son kiriting")
+
+    if not profiles[giver]["infinite_diamond"]:
+        if profiles[giver]["diamond"] < amount:
+            return await msg.answer("❌ Olmos yetarli emas")
+
+        profiles[giver]["diamond"] -= amount
+
+    profiles[target]["diamond"] += amount
+
+    await msg.answer(
+        f"💎 {amount} olmos o'tkazildi!"
+    )
+
+# ---------------- KICK ----------------
+
+@dp.message(F.text.startswith("/kick"))
+async def kick(msg: types.Message):
+    if not msg.reply_to_message:
+        return await msg.answer("❌ Reply qiling")
+
+    chat = msg.chat.id
+    target = msg.reply_to_message.from_user.id
+
+    game = games.get(chat)
+
+    if not game:
+        return
+
+    if target in game["players"]:
+        game["players"].remove(target)
+
+    if target in game["alive"]:
+        game["alive"].remove(target)
+
+    await msg.answer("👢 O‘yinchi chiqarildi!")
+
+# ---------------- START GAME ----------------
+
+@dp.message(F.text == "/startgame")
+async def startgame(msg: types.Message):
+    game = games[msg.chat.id]
+
+    if len(game["players"]) < 4:
+        return await msg.answer(
+            "❌ Kamida 4 o‘yinchi kerak!"
+        )
+
+    game["alive"] = game["players"].copy()
+    game["roles"] = assign_roles(game["players"])
+    game["actions"] = {}
+
+    for player in game["players"]:
+        create_profile(player)
+        profiles[player]["games"] += 1
+
+    await msg.answer("🟢 O‘YIN BOSHLANDI!")
+
+    for u, r in game["roles"].items():
+        try:
+            await bot.send_message(
+                u,
+                f"🎭 ROLINGIZ: {r}"
+            )
+        except:
+            pass
+
+    await night_phase(msg.chat.id)
+
+# ---------------- ROLES ----------------
+
+def assign_roles(players):
+    roles = {}
+
+    random.shuffle(players)
+
+    pool = [
+        "🔫 Don",
+        "💉 Doctor",
+        "🕵️ Detective",
+        "🔪 Killer",
+        "🤡 Joker",
+        "⛏ Konchi",
+        "🐺 Beast",
+        "👤 Citizen",
+        "👤 Citizen",
+        "👤 Citizen"
+    ]
+
+    for i, p in enumerate(players):
+        roles[p] = pool[i % len(pool)]
+
+    return roles
+
+# ---------------- NIGHT ----------------
+
+async def night_phase(chat_id):
+    game = games[chat_id]
+    game["actions"] = {}
+
+    await bot.send_message(
+        chat_id,
+        "🌙 TUN BOSHLANDI! 30 soniya"
+    )
+
+    await asyncio.sleep(NIGHT)
+
+    await resolve_night(chat_id)
+
+# ---------------- ACTIONS ----------------
+
+@dp.message()
+async def actions(msg: types.Message):
+    for chat, game in games.items():
+        if msg.from_user.id in game.get("alive", []):
+
+            text = msg.text.lower()
+
+            try:
+                if text.startswith("kill"):
+                    game["actions"][msg.from_user.id] = (
+                        "kill",
+                        int(text.split()[1])
+                    )
+
+                elif text.startswith("save"):
+                    game["actions"][msg.from_user.id] = (
+                        "save",
+                        int(text.split()[1])
+                    )
+
+            except:
+                pass
+
+# ---------------- NIGHT RESOLVE ----------------
+
+async def resolve_night(chat_id):
+    game = games[chat_id]
+
+    kill = None
+    save = None
+
+    for u, a in game["actions"].items():
+        role = game["roles"][u]
+
+        if "Don" in role or "Killer" in role:
+            kill = a[1]
+
+        if "Doctor" in role:
+            save = a[1]
+
+    dead = None
+
+    if kill and kill != save:
+        dead = kill
+
+        if dead in game["alive"]:
+            game["alive"].remove(dead)
+
+    # KONCHI BONUS
+    for p in game["alive"]:
+        role = game["roles"][p]
+
+        if role == "⛏ Konchi":
+            reward = random.choice(["diamond", "money"])
+
+            if reward == "diamond":
+                amount = random.randint(1, 3)
+
+                profiles[p]["diamond"] += amount
+
+                await bot.send_message(
+                    p,
+                    f"⛏ Siz {amount} 💎 topdingiz!"
+                )
+
+            else:
+                amount = random.randint(100, 500)
+
+                profiles[p]["dollar"] += amount
+
+                await bot.send_message(
+                    p,
+                    f"⛏ Siz {amount}$ topdingiz!"
+                )
+
+    await bot.send_message(
+        chat_id,
+        f"🌅 TUN TUGADI\n💀 O‘ldi: {dead}"
+    )
+
+    await check_win(chat_id)
+
+    await day_phase(chat_id)
+
+# ---------------- DAY ----------------
+
+async def day_phase(chat_id):
+    await bot.send_message(
+        chat_id,
+        "☀️ KUN BOSHLANDI! 30 soniya"
+    )
+
+    await asyncio.sleep(DAY)
+
+    await vote_phase(chat_id)
+
+# ---------------- VOTE ----------------
+
+async def vote_phase(chat_id):
+    game = games[chat_id]
+
+    votes.clear()
+
+    await bot.send_message(
+        chat_id,
+        "🗳 OVOZ BERING!",
+        reply_markup=vote_kb(game["alive"])
+    )
+
+    await asyncio.sleep(VOTE)
+
+    await resolve_vote(chat_id)
+
+# ---------------- VOTE HANDLER ----------------
+
+@dp.callback_query(F.data.startswith("vote_"))
+async def vote(call: types.CallbackQuery):
+    uid = call.from_user.id
+
+    if uid in votes:
+        return await call.answer(
+            "❌ Siz ovoz bergansiz",
+            show_alert=True
+        )
+
+    target = int(call.data.split("_")[1])
+
+    votes[uid] = target
+
+    await call.answer("🗳 Ovoz qabul qilindi!")
+
+# ---------------- VOTE RESOLVE ----------------
+
+async def resolve_vote(chat_id):
+    if not votes:
+        return
+
+    target = max(
+        set(votes.values()),
+        key=list(votes.values()).count
+    )
+
+    game = games[chat_id]
+
+    if target in game["alive"]:
+        game["alive"].remove(target)
+
+    await bot.send_message(
+        chat_id,
+        f"💀 OSILDI: {target}"
+    )
+
+    await check_win(chat_id)
+
+    await night_phase(chat_id)
+
+# ---------------- WIN ----------------
+
+async def check_win(chat_id):
+    game = games[chat_id]
+
+    mafia_alive = any(
+        "Don" in game["roles"][p]
+        for p in game["alive"]
+    )
+
+    if not mafia_alive:
+
+        for p in game["alive"]:
+            profiles[p]["wins"] += 1
+            profiles[p]["dollar"] += 40
+
+        await bot.send_message(
+            chat_id,
+            "🎉 FUQAROLAR YUTDI!\n💵 Har bir tirik qolgan o‘yinchiga 40$ berildi!"
+        )
+
+        games.pop(chat_id, None)
+
+# ---------------- MINE GAME ----------------
+
+@dp.message(F.text == "/mine")
+async def mine(msg: types.Message):
+    uid = msg.from_user.id
+
+    nums = list(range(1, 11))
+
+    rewards = {}
+
+    diamond_slots = random.sample(nums, 3)
+
+    mine_slots = random.sample(
+        [x for x in nums if x not in diamond_slots],
+        2
+    )
+
+    for n in nums:
+
+        if n in diamond_slots:
+            rewards[n] = (
+                "diamond",
+                random.randint(1, 3)
+            )
+
+        elif n in mine_slots:
+            rewards[n] = ("mine", 0)
+
+        else:
+            rewards[n] = (
+                "money",
+                random.randint(100, 500)
+            )
+
+    games[uid] = {"mine_rewards": rewards}
+
+    text = "🎰 Raqam tanlang:\n\n"
+
+    for n in nums:
+        text += f"{n} "
+
+    await msg.answer(text)
+
+# ---------------- PICK NUMBER ----------------
+
+@dp.message()
+async def pick(msg: types.Message):
+    uid = msg.from_user.id
+
+    if uid not in games:
+        return
+
+    if "mine_rewards" not in games[uid]:
+        return
+
+    try:
+        num = int(msg.text)
+    except:
+        return
+
+    rewards = games[uid]["mine_rewards"]
+
+    if num not in rewards:
+        return
+
+    create_profile(uid)
+
+    typ, amount = rewards[num]
+
+    if typ == "diamond":
+        profiles[uid]["diamond"] += amount
+
+        await msg.answer(
+            f"💎 Siz {amount} olmos topdingiz!"
+        )
+
+    elif typ == "money":
+        profiles[uid]["dollar"] += amount
+
+        await msg.answer(
+            f"💵 Siz {amount}$ topdingiz!"
+        )
+
+    else:
+        profiles[uid]["mines"] += 1
+
+        await msg.answer(
+            "💣 MINAGA TUSHDINGIZ!"
+        )
+
+    del games[uid]["mine_rewards"]
+
+# ---------------- RUN ----------------
+
+async def main():
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
