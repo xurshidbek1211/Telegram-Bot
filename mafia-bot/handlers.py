@@ -652,6 +652,40 @@ async def cmd_players(msg: Message):
     await msg.answer(text)
 
 
+def _assign_roles_with_preferences(game: Game):
+    """Assign roles, honoring active_role preferences from player profiles."""
+    import random
+    from game import get_role_list
+    players = list(game.players.values())
+    role_pool = get_role_list(len(players))
+
+    assigned: dict[int, Role] = {}
+    remaining = list(role_pool)
+
+    for player in players:
+        prof = get_profile(player.user_id)
+        for key in list(prof.active_roles):
+            key = ROLE_KEY_ALIASES.get(key, key)
+            item = PURCHASABLE_ROLES.get(key)
+            if not item:
+                continue
+            desired_role = item[0]
+            if desired_role in remaining:
+                assigned[player.user_id] = desired_role
+                remaining.remove(desired_role)
+                prof.active_roles.remove(key if key in prof.active_roles else key)
+                save_profile(prof)
+                break
+
+    random.shuffle(remaining)
+    pool_iter = iter(remaining)
+    for player in players:
+        if player.user_id in assigned:
+            player.role = assigned[player.user_id]
+        else:
+            player.role = next(pool_iter)
+
+
 @router.message(Command("startgame"))
 async def cmd_startgame(msg: Message, bot: Bot):
     if msg.chat.type == "private":
@@ -674,7 +708,7 @@ async def cmd_startgame(msg: Message, bot: Bot):
             f"⚠️ Kamida *{MIN_PLAYERS}* o'yinchi kerak. Hozir: *{len(game.players)}*"
         )
 
-    game.assign_roles()
+    _assign_roles_with_preferences(game)
     game.day_number = 1
 
     for player in game.players.values():
@@ -847,6 +881,104 @@ async def cmd_kick(msg: Message, bot: Bot):
         winner = game.check_win_condition()
         if winner:
             asyncio.create_task(_end_game(bot, game, winner))
+
+
+PURCHASABLE_ROLES = {
+    "don":       (Role.DON,       "🤵🏻", "Don",           2),
+    "qotil":     (Role.QOTIL,     "🔪",  "Qotil",         2),
+    "sehrgar":   (Role.SEHRGAR,   "🧙‍",  "Sehrgar",       2),
+    "komissar":  (Role.KOMISSAR,  "🕵🏼", "Komissar",      2),
+    "doctor":    (Role.DOCTOR,    "👨🏼‍⚕️", "Doktor",       1),
+    "joker":     (Role.JOKER,     "🤡",  "Joker",         1),
+    "bori":      (Role.BO_RI,     "🐺",  "Bo'ri",         1),
+    "kimyogar":  (Role.KIMYOGAR,  "👨‍🔬", "Kimyogar",      1),
+    "afsungar":  (Role.AFSUNGAR,  "💣",  "Afsungar",      1),
+    "omadli":    (Role.OMADLI,    "🤞🏼", "Omadli",        1),
+}
+
+ROLE_KEY_ALIASES = {
+    "killer": "qotil", "detective": "komissar",
+    "beast": "bori",   "wizard": "sehrgar",
+}
+
+
+def _role_shop_kb() -> InlineKeyboardMarkup:
+    rows = []
+    for key, (role, em, name, price) in PURCHASABLE_ROLES.items():
+        rows.append([InlineKeyboardButton(
+            text=f"{em} {name} — {price}💎",
+            callback_data=f"role_{key}",
+        )])
+    rows.append([InlineKeyboardButton(text="👤 Faol rollarim", callback_data="role_mylist")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(Command("roleshop"))
+async def cmd_roleshop(msg: Message):
+    user = msg.from_user
+    p = get_profile(user.id, user.first_name)
+    diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
+    active = ", ".join(p.active_roles) if p.active_roles else "Yo'q"
+    await msg.answer(
+        f"🃏 *FAOL ROL DO'KONI*\n\n"
+        f"💎 Olmoslaringiz: *{diamond_str}*\n"
+        f"🎯 Faol rollaringiz: *{active}*\n\n"
+        "Kerakli rolni tanlang — keyingi o'yinda shu rol beriladi!\n"
+        "_(Rol faqat bir marta ishlatiladi va o'yindan keyin o'chadi)_",
+        reply_markup=_role_shop_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("role_"))
+async def cb_role_buy(call: CallbackQuery):
+    key = call.data.removeprefix("role_")
+
+    if key == "mylist":
+        p = get_profile(call.from_user.id, call.from_user.first_name)
+        active = "\n".join(
+            f"  {PURCHASABLE_ROLES[k][1]} {PURCHASABLE_ROLES[k][2]}"
+            for k in p.active_roles if k in PURCHASABLE_ROLES
+        ) or "  Hech narsa yo'q"
+        return await call.answer(f"🎯 Faol rollaringiz:\n{active}", show_alert=True)
+
+    key = ROLE_KEY_ALIASES.get(key, key)
+    item = PURCHASABLE_ROLES.get(key)
+    if not item:
+        return await call.answer("❌ Rol topilmadi.", show_alert=True)
+
+    role_enum, em, name, price = item
+    uid = call.from_user.id
+    p = get_profile(uid, call.from_user.first_name)
+
+    if not p.infinite_diamond and p.diamond < price:
+        return await call.answer(
+            f"❌ Yetarli olmos yo'q!\n{em} {name} — {price}💎\nSizda: {p.diamond}💎",
+            show_alert=True,
+        )
+
+    if key in p.active_roles:
+        return await call.answer(
+            f"⚠️ Sizda allaqachon {em} {name} roli bor!", show_alert=True
+        )
+
+    if not p.infinite_diamond:
+        p.diamond -= price
+    p.active_roles.append(key)
+    save_profile(p)
+
+    diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
+    await call.answer(f"✅ {em} {name} roli sotib olindi!", show_alert=True)
+    try:
+        await call.message.edit_text(
+            f"🃏 *FAOL ROL DO'KONI*\n\n"
+            f"💎 Olmoslaringiz: *{diamond_str}*\n"
+            f"🎯 Faol rollaringiz: *{', '.join(p.active_roles)}*\n\n"
+            f"✅ *{em} {name}* muvaffaqiyatli qo'shildi!\n"
+            "_(Keyingi o'yinda shu rol beriladi)_",
+            reply_markup=_role_shop_kb(),
+        )
+    except Exception:
+        pass
 
 
 SHOP_ITEMS = {
