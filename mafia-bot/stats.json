@@ -1,6 +1,6 @@
 {
-  "total_games": 1,
+  "total_games": 2,
   "mafia_wins": 1,
-  "citizen_wins": 0,
-  "total_players": 5
+  "citizen_wins": 1,
+  "total_players": 9
 }

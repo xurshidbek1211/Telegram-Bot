@@ -49,3 +49,8 @@ externalPort = 80
 
 [nix]
 channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+OWNER_ID = "7838382589"

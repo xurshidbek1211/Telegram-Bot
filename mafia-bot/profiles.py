@@ -16,6 +16,7 @@ class Profile:
     wins: int = 0
     games: int = 0
     infinite_diamond: bool = False
+    infinite_dollar: bool = False
     shield: int = 0
     documents: int = 0
     hang_protect: int = 0
@@ -38,7 +39,12 @@ def _load_all() -> dict[int, Profile]:
     try:
         with open(PROFILES_FILE, "r") as f:
             raw = json.load(f)
-        return {int(k): Profile(**v) for k, v in raw.items()}
+        profiles = {}
+        known = {f.name for f in Profile.__dataclass_fields__.values()}
+        for k, v in raw.items():
+            filtered = {key: val for key, val in v.items() if key in known}
+            profiles[int(k)] = Profile(**filtered)
+        return profiles
     except Exception:
         return {}
 
@@ -52,10 +58,16 @@ def _init_cache():
     global _cache
     if not _cache:
         _cache = _load_all()
-        if OWNER_ID and OWNER_ID not in _cache:
-            _cache[OWNER_ID] = Profile(user_id=OWNER_ID, infinite_diamond=True)
-        elif OWNER_ID and OWNER_ID in _cache:
+    if OWNER_ID:
+        if OWNER_ID not in _cache:
+            _cache[OWNER_ID] = Profile(
+                user_id=OWNER_ID,
+                infinite_diamond=True,
+                infinite_dollar=True,
+            )
+        else:
             _cache[OWNER_ID].infinite_diamond = True
+            _cache[OWNER_ID].infinite_dollar = True
 
 
 def get_profile(user_id: int, first_name: str = "") -> Profile:
@@ -75,14 +87,38 @@ def save_profile(profile: Profile):
 
 def add_dollar(user_id: int, amount: int):
     p = get_profile(user_id)
-    p.dollar += amount
+    if not p.infinite_dollar:
+        p.dollar += amount
+        save_profile(p)
+
+
+def spend_dollar(user_id: int, amount: int) -> bool:
+    p = get_profile(user_id)
+    if p.infinite_dollar:
+        return True
+    if p.dollar < amount:
+        return False
+    p.dollar -= amount
     save_profile(p)
+    return True
 
 
 def add_diamond(user_id: int, amount: int):
     p = get_profile(user_id)
-    p.diamond += amount
+    if not p.infinite_diamond:
+        p.diamond += amount
+        save_profile(p)
+
+
+def spend_diamond(user_id: int, amount: int) -> bool:
+    p = get_profile(user_id)
+    if p.infinite_diamond:
+        return True
+    if p.diamond < amount:
+        return False
+    p.diamond -= amount
     save_profile(p)
+    return True
 
 
 def transfer_diamond(giver_id: int, target_id: int, amount: int) -> bool:
@@ -107,5 +143,6 @@ def record_game_start(user_id: int, first_name: str = ""):
 def record_win(user_id: int, dollar_reward: int = 40):
     p = get_profile(user_id)
     p.wins += 1
-    p.dollar += dollar_reward
+    if not p.infinite_dollar:
+        p.dollar += dollar_reward
     save_profile(p)
