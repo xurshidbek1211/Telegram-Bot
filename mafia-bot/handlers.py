@@ -242,6 +242,22 @@ async def _do_vote_resolution(bot: Bot, game: Game):
     role_name = ROLE_NAMES_UZ.get(eliminated.role, "")
     emoji = ROLE_EMOJIS.get(eliminated.role, "")
 
+    # hang_protect item cancels the elimination
+    from profiles import get_profile, save_profile as _sp
+    ep = get_profile(eliminated_id)
+    if ep.hang_protect > 0:
+        ep.hang_protect -= 1
+        _sp(ep)
+        await bot.send_message(
+            game.chat_id,
+            f"🗳️ *Ovoz natijalari — {game.day_number}-kun:*\n{summary}\n\n"
+            f"⚖️ *{eliminated.display_name}* osishdan himoya ishlatdi va omon qoldi! "
+            f"(Qolgan himoya: {ep.hang_protect})",
+        )
+        game.day_number += 1
+        await run_night(bot, game.chat_id)
+        return
+
     # Suidsid special win
     if eliminated.role == Role.SUIDSID:
         game.eliminate_player(eliminated_id)
@@ -831,6 +847,138 @@ async def cmd_kick(msg: Message, bot: Bot):
         winner = game.check_win_condition()
         if winner:
             asyncio.create_task(_end_game(bot, game, winner))
+
+
+SHOP_ITEMS = {
+    "shield":        ("🛡",  "Himoya",               "dollar", 140, "shield"),
+    "documents":     ("📁",  "Hujjat",               "dollar", 200, "documents"),
+    "hang_protect":  ("⚖️", "Osishdan himoya",       "diamond", 1,  "hang_protect"),
+    "killer_protect":("⛑️", "Qotildan himoya",       "diamond", 1,  "killer_protect"),
+    "drug_protect":  ("💊",  "Doridan himoya",        "diamond", 1,  "drug_protect"),
+    "mask":          ("🎭",  "Maska",                 "diamond", 1,  "mask"),
+    "slip_protect":  ("🪤",  "Sirpanishdan himoya",   "diamond", 1,  "slip_protect"),
+    "hero_protect":  ("🔰",  "Geroydan himoya",       "diamond", 1,  "hero_protect"),
+}
+
+
+def _shop_kb() -> InlineKeyboardMarkup:
+    rows = []
+    for key, (em, name, currency, price, _) in SHOP_ITEMS.items():
+        cur_icon = "💵" if currency == "dollar" else "💎"
+        rows.append([InlineKeyboardButton(
+            text=f"{em} {name} — {price}{cur_icon}",
+            callback_data=f"shop_buy:{key}"
+        )])
+    rows.append([InlineKeyboardButton(text="👤 Profilim", callback_data="shop_profile")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.message(Command("shop"))
+async def cmd_shop(msg: Message):
+    user = msg.from_user
+    p = get_profile(user.id, user.first_name)
+    diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
+    await msg.answer(
+        f"🛒 *DO'KON*\n\n"
+        f"💵 Balansingiz: *{p.dollar}$*\n"
+        f"💎 Olmoslaringiz: *{diamond_str}*\n\n"
+        "Sotib olmoqchi bo'lgan narsani tanlang:",
+        reply_markup=_shop_kb(),
+    )
+
+
+@router.callback_query(F.data.startswith("shop_buy:"))
+async def cb_shop_buy(call: CallbackQuery):
+    key = call.data.split(":")[1]
+    item = SHOP_ITEMS.get(key)
+    if not item:
+        return await call.answer("❌ Noma'lum mahsulot.", show_alert=True)
+
+    em, name, currency, price, field = item
+    uid = call.from_user.id
+    p = get_profile(uid, call.from_user.first_name)
+
+    if currency == "dollar":
+        if p.dollar < price:
+            return await call.answer(
+                f"❌ Yetarli dollar yo'q!\nKerak: {price}$  |  Sizda: {p.dollar}$",
+                show_alert=True,
+            )
+        p.dollar -= price
+    else:
+        if not p.infinite_diamond and p.diamond < price:
+            return await call.answer(
+                f"❌ Yetarli olmos yo'q!\nKerak: {price}💎  |  Sizda: {p.diamond}💎",
+                show_alert=True,
+            )
+        if not p.infinite_diamond:
+            p.diamond -= price
+
+    setattr(p, field, getattr(p, field) + 1)
+    save_profile(p)
+
+    diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
+    await call.answer(f"✅ {em} {name} sotib olindi!", show_alert=False)
+
+    try:
+        await call.message.edit_text(
+            f"🛒 *DO'KON*\n\n"
+            f"💵 Balansingiz: *{p.dollar}$*\n"
+            f"💎 Olmoslaringiz: *{diamond_str}*\n\n"
+            f"✅ *{em} {name}* muvaffaqiyatli sotib olindi!\n\n"
+            "Yana xarid qilish uchun tanlang:",
+            reply_markup=_shop_kb(),
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "shop_profile")
+async def cb_shop_profile(call: CallbackQuery):
+    uid = call.from_user.id
+    p = get_profile(uid, call.from_user.first_name)
+    diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
+    win_rate = f"{round(p.wins / p.games * 100)}%" if p.games > 0 else "—"
+
+    items = []
+    if p.shield:        items.append(f"🛡 Himoya: {p.shield}")
+    if p.documents:     items.append(f"📁 Hujjat: {p.documents}")
+    if p.hang_protect:  items.append(f"⚖️ Osishdan himoya: {p.hang_protect}")
+    if p.killer_protect:items.append(f"⛑️ Qotildan himoya: {p.killer_protect}")
+    if p.gun:           items.append(f"🔫 Miltiq: {p.gun}")
+    if p.drug_protect:  items.append(f"💊 Doridan himoya: {p.drug_protect}")
+    if p.mask:          items.append(f"🎭 Maska: {p.mask}")
+    if p.slip_protect:  items.append(f"🪤 Sirpanishdan himoya: {p.slip_protect}")
+    if p.hero_protect:  items.append(f"🔰 Geroydan himoya: {p.hero_protect}")
+    if p.mines:         items.append(f"💣 Minalar: {p.mines}")
+    items_str = "\n".join(items) if items else "  Hech narsa yo'q"
+
+    await call.answer()
+    await call.message.edit_text(
+        f"👤 *{call.from_user.first_name}*\n\n"
+        f"💵 Dollar: *{p.dollar}$*\n"
+        f"💎 Olmos: *{diamond_str}*\n\n"
+        f"🎯 G'alabalar: *{p.wins}*  |  🎲 O'yinlar: *{p.games}*  |  📈 {win_rate}\n\n"
+        f"🎒 *Inventar:*\n{items_str}",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛒 Do'konga qaytish", callback_data="shop_back")]
+        ]),
+    )
+
+
+@router.callback_query(F.data == "shop_back")
+async def cb_shop_back(call: CallbackQuery):
+    uid = call.from_user.id
+    p = get_profile(uid, call.from_user.first_name)
+    diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
+    await call.answer()
+    await call.message.edit_text(
+        f"🛒 *DO'KON*\n\n"
+        f"💵 Balansingiz: *{p.dollar}$*\n"
+        f"💎 Olmoslaringiz: *{diamond_str}*\n\n"
+        "Sotib olmoqchi bo'lgan narsani tanlang:",
+        reply_markup=_shop_kb(),
+    )
 
 
 @router.message(Command("mine"))

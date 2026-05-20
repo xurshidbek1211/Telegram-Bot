@@ -5,6 +5,18 @@ import random
 from typing import Optional
 from aiogram import Bot
 from game import Game, Player, Role, MAFIA_TEAM, ROLE_EMOJIS
+from profiles import get_profile, save_profile
+
+
+def _use_item(uid: int, field: str) -> bool:
+    """Consume one unit of a shop item. Returns True if item was available."""
+    p = get_profile(uid)
+    count = getattr(p, field, 0)
+    if count > 0:
+        setattr(p, field, count - 1)
+        save_profile(p)
+        return True
+    return False
 
 
 def _role_name(role: Role) -> str:
@@ -28,11 +40,15 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     actions = game.night_actions
     alive = {p.user_id: p for p in game.alive_players()}
 
-    # 1. Kezuvchi blocks
+    # 1. Kezuvchi blocks (drug_protect item counters it)
     kez_target = actions.get(Role.KEZUVCHI)
     if kez_target and kez_target in alive:
-        game.blocked.add(kez_target)
-        _record_visit(game, _uid(game, Role.KEZUVCHI), kez_target)
+        if _use_item(kez_target, "drug_protect"):
+            events.append(f"💊 *{alive[kez_target].display_name}* doridan himoya qilindi — blok o'tmadi!")
+            await _dm(bot, kez_target, "💊 *Dori himoyangiz* ishga tushdi! Kezuvchi sizi uxlata olmadi.")
+        else:
+            game.blocked.add(kez_target)
+            _record_visit(game, _uid(game, Role.KEZUVCHI), kez_target)
 
     def blocked(uid): return uid in game.blocked
 
@@ -72,13 +88,16 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     if adv_actor and adv_t and not blocked(adv_actor.user_id):
         game.advokat_protected = adv_t
 
-    # 4. Aferist swap
+    # 4. Aferist swap (slip_protect counters it)
     afer = game.get_alive_by_role(Role.AFERIST)
     afer_t = actions.get(Role.AFERIST)
     if afer and afer_t and not blocked(afer.user_id) and afer_t in alive:
-        others = [p.display_name for p in alive.values() if p.user_id != afer_t]
-        if others:
-            game.aferist_swaps[afer_t] = random.choice(others)
+        if _use_item(afer_t, "slip_protect"):
+            await _dm(bot, afer_t, "🪤 *Sirpanishdan himoyangiz* ishga tushdi! Aferist sizning shaxsingizni almashtira olmadi.")
+        else:
+            others = [p.display_name for p in alive.values() if p.user_id != afer_t]
+            if others:
+                game.aferist_swaps[afer_t] = random.choice(others)
 
     # 5. Kimyogar
     kim = game.get_alive_by_role(Role.KIMYOGAR)
@@ -113,7 +132,7 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     if kim_kill and kim_kill in alive:
         pending[kim_kill] = "kimyogar"
 
-    # 7. Komissar investigation
+    # 7. Komissar investigation (documents item fakes non-mafia result)
     komissar = game.get_alive_by_role(Role.KOMISSAR)
     serzhant = game.get_alive_by_role(Role.SERZHANT)
     active_k = komissar or (serzhant if not komissar else None)
@@ -124,7 +143,10 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
             target_p = alive[k_t]
             is_mafia = target_p.role in MAFIA_TEAM
             shielded = k_t == game.advokat_protected
-            apparent = is_mafia and not shielded
+            doc_shield = is_mafia and _use_item(k_t, "documents")
+            if doc_shield:
+                await _dm(bot, k_t, "📁 *Hujjat himoyangiz* ishga tushdi! Komissar sizi tekshirdi, lekin siz fuqaro ko'rindingiz.")
+            apparent = is_mafia and not shielded and not doc_shield
             komissar_result = (
                 f"🔴 *{target_p.display_name}* — *MAFIYA!*"
                 if apparent else
@@ -165,13 +187,27 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
         pending.pop(omadli.user_id)
         events.append(f"🍀 *{omadli.display_name}* (Omadli) — o'lim daqiqasida omon qoldi!")
 
-    # 11. Remove saved
+    # 11. Remove saved + shop shield / killer_protect items
     for sid in saves:
         if sid in pending:
             pending.pop(sid)
             sp = alive.get(sid)
             if sp:
                 events.append(f"💊 *{sp.display_name}* himoya qilindi va omon qoldi!")
+
+    # shield blocks any night kill; killer_protect blocks qotil specifically
+    for tid, cause in list(pending.items()):
+        tp = alive.get(tid)
+        if not tp:
+            continue
+        if cause == "qotil" and _use_item(tid, "killer_protect"):
+            pending.pop(tid)
+            events.append(f"⛑️ *{tp.display_name}* — Qotildan himoya ishga tushdi! Omon qoldi.")
+            await _dm(bot, tid, "⛑️ *Qotildan himoyangiz* ishga tushdi! Qotil seni o'ldira olmadi.")
+        elif _use_item(tid, "shield"):
+            pending.pop(tid)
+            events.append(f"🛡 *{tp.display_name}* — Himoya qalqoni ishga tushdi! Omon qoldi.")
+            await _dm(bot, tid, "🛡 *Himoya qalqoningiz* ishga tushdi! Bu kecha omon qoldingiz.")
 
     # 12. Afsungar counter-kill
     afsungar = game.get_alive_by_role(Role.AFSUNGAR)
