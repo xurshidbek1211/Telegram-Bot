@@ -552,18 +552,46 @@ async def cmd_start(msg: Message):
     if msg.chat.type == "private":
         await msg.answer(
             "👋 Salom! Men *Mafiya O'yin Boti*man.\n\n"
-            "Meni guruh chatiga qo'shing va /newgame bilan o'yinni boshlang!\n\n"
+            "Meni guruh chatiga qo'shing va /start yoki /newgame bilan o'yinni boshlang!\n\n"
             "*Buyruqlar:*\n"
+            "/start — Guruhda yangi o'yin lobby'si\n"
             "/newgame — Yangi o'yin lobby'si\n"
             "/startgame — O'yinni boshlash (admin)\n"
             "/endgame — O'yinni tugatish (admin)\n"
             "/players — O'yinchilar ro'yxati\n"
+            "/profile — Profilingiz\n"
+            "/shop — Do'kon\n"
+            "/roleshop — Rol do'koni\n"
+            "/mine — Mine o'yini\n"
             "/stats — Statistika\n"
             "/rules — Qoidalar\n"
             "/roles — Barcha rollar haqida",
         )
-    else:
-        await msg.answer("👋 /newgame bilan yangi o'yin boshlang!")
+        return
+
+    # Group chat: open or reset the lobby
+    chat_id = msg.chat.id
+    existing = games.get(chat_id)
+    if existing and existing.phase not in (Phase.LOBBY, Phase.ENDED):
+        return await msg.answer(
+            "⚠️ O'yin allaqachon davom etmoqda!\n"
+            "Yangi ro'yxat ochish uchun avval /endgame bilan tugatish kerak."
+        )
+
+    games[chat_id] = Game(chat_id=chat_id)
+    game = games[chat_id]
+    user = msg.from_user
+    game.add_player(user.id, user.username or "", user.first_name)
+
+    await msg.answer(
+        f"🎮 *RO'YXATDAN O'TISH BOSHLANDI!*\n\n"
+        f"👤 *{user.first_name}* o'yinni yaratdi.\n\n"
+        "Quyidagi tugmani bosib qo'shiling!\n"
+        "Tayyor bo'lganda admin /startgame bossin.\n\n"
+        f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
+        f"{_player_list(game)}",
+        reply_markup=_lobby_kb(chat_id),
+    )
 
 
 @router.message(Command("rules"))
