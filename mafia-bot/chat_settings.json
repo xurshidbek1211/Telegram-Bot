@@ -1,0 +1,13 @@
+{
+  "-1003945788981": {
+    "chat_id": -1003945788981,
+    "disabled_roles": [
+      "GAZABKOR"
+    ],
+    "leave_enabled": false,
+    "protection_enabled": false,
+    "night_secs": 30,
+    "day_secs": 30,
+    "vote_secs": 30
+  }
+}

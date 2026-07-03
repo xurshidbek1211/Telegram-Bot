@@ -14,6 +14,8 @@ class ChatSettings:
     night_secs: int = 30
     day_secs: int = 30
     vote_secs: int = 30
+    hang_confirm_enabled: bool = True
+    hang_confirm_secs: int = 30
 
 
 _cache: dict[int, ChatSettings] = {}

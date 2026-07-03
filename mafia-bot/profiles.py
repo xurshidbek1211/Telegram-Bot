@@ -134,6 +134,19 @@ def transfer_diamond(giver_id: int, target_id: int, amount: int) -> bool:
     return True
 
 
+def transfer_dollar(giver_id: int, target_id: int, amount: int) -> bool:
+    giver = get_profile(giver_id)
+    target = get_profile(target_id)
+    if not giver.infinite_dollar and giver.dollar < amount:
+        return False
+    if not giver.infinite_dollar:
+        giver.dollar -= amount
+    target.dollar += amount
+    save_profile(giver)
+    save_profile(target)
+    return True
+
+
 def record_game_start(user_id: int, first_name: str = ""):
     p = get_profile(user_id, first_name)
     p.games += 1
