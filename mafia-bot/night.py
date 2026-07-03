@@ -4,8 +4,9 @@ Night resolution engine for aiogram version.
 import random
 from typing import Optional
 from aiogram import Bot
-from game import Game, Player, Role, MAFIA_TEAM, ROLE_EMOJIS
+from game import Game, Player, Role, MAFIA_TEAM, CITIZEN_TEAM, ROLE_EMOJIS
 from profiles import get_profile, save_profile
+from settings import get_settings
 
 
 def _use_item(uid: int, field: str) -> bool:
@@ -39,11 +40,12 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     events = []
     actions = game.night_actions
     alive = {p.user_id: p for p in game.alive_players()}
+    protection_enabled = get_settings(game.chat_id).protection_enabled
 
     # 1. Kezuvchi blocks (drug_protect item counters it)
     kez_target = actions.get(Role.KEZUVCHI)
     if kez_target and kez_target in alive:
-        if _use_item(kez_target, "drug_protect"):
+        if protection_enabled and _use_item(kez_target, "drug_protect"):
             events.append(f"💊 *{alive[kez_target].display_name}* doridan himoya qilindi — blok o'tmadi!")
             await _dm(bot, kez_target, "💊 *Dori himoyangiz* ishga tushdi! Kezuvchi sizi uxlata olmadi.")
         else:
@@ -92,7 +94,7 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     afer = game.get_alive_by_role(Role.AFERIST)
     afer_t = actions.get(Role.AFERIST)
     if afer and afer_t and not blocked(afer.user_id) and afer_t in alive:
-        if _use_item(afer_t, "slip_protect"):
+        if protection_enabled and _use_item(afer_t, "slip_protect"):
             await _dm(bot, afer_t, "🪤 *Sirpanishdan himoyangiz* ishga tushdi! Aferist sizning shaxsingizni almashtira olmadi.")
         else:
             others = [p.display_name for p in alive.values() if p.user_id != afer_t]
@@ -132,6 +134,10 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     if kim_kill and kim_kill in alive:
         pending[kim_kill] = "kimyogar"
 
+    konchi = game.get_alive_by_role(Role.KONCHI)
+    if konchi and actions.get("konchi_mine"):
+        pending[konchi.user_id] = "konchi_mine"
+
     # 7. Komissar investigation (documents item fakes non-mafia result)
     komissar = game.get_alive_by_role(Role.KOMISSAR)
     serzhant = game.get_alive_by_role(Role.SERZHANT)
@@ -143,7 +149,7 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
             target_p = alive[k_t]
             is_mafia = target_p.role in MAFIA_TEAM
             shielded = k_t == game.advokat_protected
-            doc_shield = is_mafia and _use_item(k_t, "documents")
+            doc_shield = is_mafia and protection_enabled and _use_item(k_t, "documents")
             if doc_shield:
                 await _dm(bot, k_t, "📁 *Hujjat himoyangiz* ishga tushdi! Komissar sizi tekshirdi, lekin siz fuqaro ko'rindingiz.")
             apparent = is_mafia and not shielded and not doc_shield
@@ -200,11 +206,11 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
         tp = alive.get(tid)
         if not tp:
             continue
-        if cause == "qotil" and _use_item(tid, "killer_protect"):
+        if cause == "qotil" and protection_enabled and _use_item(tid, "killer_protect"):
             pending.pop(tid)
             events.append(f"⛑️ *{tp.display_name}* — Qotildan himoya ishga tushdi! Omon qoldi.")
             await _dm(bot, tid, "⛑️ *Qotildan himoyangiz* ishga tushdi! Qotil seni o'ldira olmadi.")
-        elif _use_item(tid, "shield"):
+        elif protection_enabled and _use_item(tid, "shield"):
             pending.pop(tid)
             events.append(f"🛡 *{tp.display_name}* — Himoya qalqoni ishga tushdi! Omon qoldi.")
             await _dm(bot, tid, "🛡 *Himoya qalqoningiz* ishga tushdi! Bu kecha omon qoldingiz.")
@@ -223,6 +229,19 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
         for p in game.alive_players():
             if p.role in role_map.get(cause, set()):
                 afs_counters.add(p.user_id)
+
+    # 13a. Tulki transformation
+    tulki = game.get_alive_by_role(Role.TULKI)
+    tulki_t = actions.get(Role.TULKI)
+    tulki_new_role = None
+    if tulki and tulki_t and tulki_t in alive and tulki_t != tulki.user_id and not blocked(tulki.user_id):
+        target = alive[tulki_t]
+        if target.role in MAFIA_TEAM:
+            tulki_new_role = Role.MAFIA
+        elif target.role in CITIZEN_TEAM:
+            tulki_new_role = Role.SERZHANT
+        else:
+            tulki_new_role = Role.QOTIL
 
     # 13. Bo'ri transformation
     bori = game.get_alive_by_role(Role.BO_RI)
@@ -275,6 +294,24 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
                 await _dm(bot, bori.user_id, "🐺 *Serjantga aylandingiz!* Fuqarolar tomonida o'ynaysiz.")
             else:
                 bori.alive = False
+
+    # 16a. Tulki transform
+    if tulki_new_role and tulki and tulki.alive:
+        tulki.role = tulki_new_role
+        if tulki_new_role == Role.MAFIA:
+            events.append(f"🦊 *{tulki.display_name}* Mafiaga aylandi!")
+            await _dm(bot, tulki.user_id,
+                "🦊 Tanlagan nishoningiz Mafiya ekan — siz *Mafiaga aylandingiz!*\n"
+                "Keyingi tundan boshlab Mafiya bilan ishlaysiz.")
+        elif tulki_new_role == Role.SERZHANT:
+            events.append(f"🦊 *{tulki.display_name}* Serjantga aylandi!")
+            await _dm(bot, tulki.user_id,
+                "🦊 Tanlagan nishoningiz tinch aholi ekan — siz *Serjantga aylandingiz!*")
+        else:
+            events.append(f"🦊 *{tulki.display_name}* Qotilga aylandi!")
+            await _dm(bot, tulki.user_id,
+                "🦊 Tanlagan nishoningiz mustaqil o'yinchi ekan — siz *Qotilga aylandingiz!*\n"
+                "Endi shahardagi hammani yo'q qilishingiz kerak!")
 
     # 17. Serzhant promotion
     if komissar and not komissar.alive and serzhant and serzhant.alive:

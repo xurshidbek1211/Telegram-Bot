@@ -14,7 +14,6 @@ class Role(Enum):
     KOMISSAR = "Komissar Katani"
     DOCTOR = "Doktor"
     SERZHANT = "Serjant"
-    JANOB = "Janob"
     CITIZEN = "Tinch Axoli"
     DAYDI = "Daydi"
     KEZUVCHI = "Kezuvchi"
@@ -22,7 +21,6 @@ class Role(Enum):
     ADMIRAL = "Admiral"
     SOTQIN = "Sotqin"
     QOTIL = "Qotil"
-    SUIDSID = "Suidsid"
     BO_RI = "Bo'ri"
     AFSUNGAR = "Afsungar"
     AFERIST = "Aferist"
@@ -31,6 +29,8 @@ class Role(Enum):
     JOKER = "Joker"
     KIMYOGAR = "Kimyogar"
     MINIOR = "Minior"
+    KONCHI = "Konchi"
+    TULKI = "Tulki"
 
 
 class Phase(Enum):
@@ -42,19 +42,19 @@ class Phase(Enum):
 
 
 MAFIA_TEAM = {Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST}
-CITIZEN_TEAM = {Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.CITIZEN,
+CITIZEN_TEAM = {Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.CITIZEN,
                 Role.DAYDI, Role.KEZUVCHI, Role.OMADLI, Role.ADMIRAL, Role.SOTQIN}
 
 ROLE_EMOJIS = {
     Role.DON: "🤵🏻", Role.MAFIA: "🤵🏼", Role.YOLLANMA_QOTIL: "🥷",
     Role.ADVOKAT: "👨🏼‍💼", Role.JURNALIST: "👩🏼‍💻",
     Role.KOMISSAR: "🕵🏼", Role.DOCTOR: "👨🏼‍⚕️", Role.SERZHANT: "👮🏼",
-    Role.JANOB: "🎖", Role.CITIZEN: "👨🏼", Role.DAYDI: "🧙‍♂️",
+    Role.CITIZEN: "👨🏼", Role.DAYDI: "🧙‍♂️",
     Role.KEZUVCHI: "💃", Role.OMADLI: "🤞🏼", Role.ADMIRAL: "🧑🏻‍✈️",
-    Role.SOTQIN: "🤓", Role.QOTIL: "🔪", Role.SUIDSID: "🤦🏼",
+    Role.SOTQIN: "🤓", Role.QOTIL: "🔪",
     Role.BO_RI: "🐺", Role.AFSUNGAR: "💣", Role.AFERIST: "🤹🏻",
     Role.SEHRGAR: "🧙‍", Role.GAZABKOR: "🧟", Role.JOKER: "🤡",
-    Role.KIMYOGAR: "👨‍🔬", Role.MINIOR: "☠️",
+    Role.KIMYOGAR: "👨‍🔬", Role.MINIOR: "☠️", Role.KONCHI: "⛏️", Role.TULKI: "🦊",
 }
 
 ROLE_DESCRIPTIONS_UZ = {
@@ -66,7 +66,6 @@ ROLE_DESCRIPTIONS_UZ = {
     Role.KOMISSAR: "Har tun bir o'yinchini tekshirasiz. Agar u Mafiya bo'lsa (va himoyalanmagan bo'lsa), *u o'ldiriladi*.",
     Role.DOCTOR: "Har tun bir o'yinchini yo'q qilinishdan himoya qilasiz. O'zingizni ham himoya qila olasiz.",
     Role.SERZHANT: "Komissar har kecha kimni tekshirgani haqida sizga xabar beradi.\n⚠️ Komissar o'lsa, *siz uning o'rnini egallaysiz.*",
-    Role.JANOB: "Kunduzgi ovoz berishda sizning ovozingiz *ikkitaga teng* bo'ladi. Ovoz vaqtida shaxsingiz oshkor bo'lmaydi.",
     Role.CITIZEN: "Vazifangiz — Mafiyani topish va ovoz berish orqali ularni osish.",
     Role.DAYDI: "Har tun xohlagan odamning uyiga borasiz va o'sha kechasi *kimlar kelganini* ko'rasiz.",
     Role.KEZUVCHI: "Har tun biror o'yinchiga uyqu dori berasiz — u bir tunni *harakatsiz* o'tkazadi.",
@@ -74,7 +73,6 @@ ROLE_DESCRIPTIONS_UZ = {
     Role.ADMIRAL: "Komissar va Serjant tirik ekan, sizi hech kim o'ldira olmaydi. Ikkovi o'lsa, siz *Komissar* bo'lasiz.",
     Role.SOTQIN: "Har tun bir o'yinchini tanlaysiz. Agar u Don, Mafia yoki Qotil bo'lsa, shaxsingizni ochiqlamasdan fosh qila olasiz!",
     Role.QOTIL: "Shahardagi hamma o'lishi kerak, sizdan tashqari! Har tun bir o'yinchini o'ldirasiz.",
-    Role.SUIDSID: "Kunduz ovozda *osib o'ldirilsangiz — sen yutasan!* 🎉",
     Role.BO_RI: "🔴 Mafiya o'ldirsa → Mafiaga aylanasiz.\n🔵 Komissar o'ldirsa → Serjantga aylanasiz.\n🔪 Qotil o'ldirsa → shu zahoti o'lasiz.",
     Role.AFSUNGAR: "Kechasi o'ldirilsangiz, o'ldirgan ham halok bo'ladi!\nKunduz osisangiz, birorini o'zingiz bilan olib keta olasiz.",
     Role.AFERIST: "Har tun biror o'yinchining kunduzgi ovoz berish shaxsini almashtiradi.",
@@ -83,6 +81,8 @@ ROLE_DESCRIPTIONS_UZ = {
     Role.JOKER: "Har tun biror o'yinchiga 4 ta karta yuborasiz — biri o'lim kartasi (25% ehtimol). O'lsa — siz g'alaba qozonasiz!",
     Role.KIMYOGAR: "Har tun biror o'yinchini *davolashingiz* yoki *o'ldirishingiz* mumkin. Tirik qolsangiz g'alaba!",
     Role.MINIOR: "Har tun tanlagan o'yinchingizning eshigi oldiga *mina* qo'yasiz. O'sha kechasi kelgan barcha o'yinchilar halok bo'ladi.",
+    Role.KONCHI: "Har tun 1 ta raqam tanlaysiz: 💎 olmos, 💵 pul yoki 💣 mina topishingiz mumkin. Minaga tushsangiz — halok bo'lasiz!",
+    Role.TULKI: "Har tun 1 o'yinchini tanlaysiz. Tinch aholi bo'lsa → *Serjant*ga, Mafiya bo'lsa → *Mafiya*ga, mustaqil bo'lsa → *Qotil*ga aylanasiz!",
 }
 
 MIN_PLAYERS = 4
@@ -93,28 +93,30 @@ ROLE_DISTRIBUTION = {
     5:  [Role.DON, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.CITIZEN],
     6:  [Role.DON, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.CITIZEN],
     7:  [Role.DON, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.CITIZEN, Role.CITIZEN],
-    8:  [Role.DON, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.CITIZEN, Role.CITIZEN],
+    8:  [Role.DON, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.CITIZEN, Role.CITIZEN, Role.CITIZEN],
     9:  [Role.DON, Role.MAFIA, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.DAYDI, Role.CITIZEN, Role.CITIZEN],
-    10: [Role.DON, Role.MAFIA, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.DAYDI, Role.CITIZEN, Role.CITIZEN],
-    11: [Role.DON, Role.MAFIA, Role.MAFIA, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.KEZUVCHI, Role.CITIZEN, Role.CITIZEN],
-    12: [Role.DON, Role.MAFIA, Role.MAFIA, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.KEZUVCHI, Role.OMADLI, Role.CITIZEN, Role.CITIZEN],
-    13: [Role.DON, Role.MAFIA, Role.MAFIA, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.KEZUVCHI, Role.OMADLI, Role.SUIDSID, Role.CITIZEN],
-    14: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.KEZUVCHI, Role.OMADLI, Role.SUIDSID, Role.ADMIRAL, Role.CITIZEN],
-    15: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.KEZUVCHI, Role.OMADLI, Role.SUIDSID, Role.ADMIRAL, Role.CITIZEN],
-    16: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.SUIDSID, Role.ADMIRAL, Role.CITIZEN],
-    17: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.SUIDSID, Role.ADMIRAL, Role.BO_RI, Role.CITIZEN],
-    18: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.SUIDSID, Role.ADMIRAL, Role.BO_RI, Role.AFSUNGAR, Role.CITIZEN],
-    19: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.SUIDSID, Role.ADMIRAL, Role.BO_RI, Role.AFSUNGAR, Role.AFERIST, Role.CITIZEN],
-    20: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.JANOB, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.SUIDSID, Role.ADMIRAL, Role.BO_RI, Role.AFSUNGAR, Role.AFERIST, Role.DAYDI, Role.SOTQIN],
+    10: [Role.DON, Role.MAFIA, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.DAYDI, Role.CITIZEN, Role.CITIZEN, Role.CITIZEN],
+    11: [Role.DON, Role.MAFIA, Role.MAFIA, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.TULKI, Role.CITIZEN, Role.CITIZEN],
+    12: [Role.DON, Role.MAFIA, Role.MAFIA, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.TULKI, Role.CITIZEN, Role.CITIZEN],
+    13: [Role.DON, Role.MAFIA, Role.MAFIA, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.TULKI, Role.CITIZEN, Role.CITIZEN],
+    14: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.ADMIRAL, Role.TULKI, Role.KONCHI, Role.CITIZEN],
+    15: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.ADMIRAL, Role.TULKI, Role.KONCHI, Role.CITIZEN],
+    16: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.TULKI, Role.KONCHI, Role.CITIZEN],
+    17: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.BO_RI, Role.TULKI, Role.KONCHI, Role.CITIZEN],
+    18: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.BO_RI, Role.AFSUNGAR, Role.TULKI, Role.KONCHI, Role.CITIZEN],
+    19: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.BO_RI, Role.AFSUNGAR, Role.AFERIST, Role.TULKI, Role.KONCHI, Role.CITIZEN],
+    20: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.BO_RI, Role.AFSUNGAR, Role.AFERIST, Role.DAYDI, Role.SOTQIN, Role.TULKI, Role.KONCHI],
 }
 
 
-def get_role_list(player_count: int) -> list:
+def get_role_list(player_count: int, disabled_roles: Optional[set] = None) -> list:
     if player_count in ROLE_DISTRIBUTION:
         roles = ROLE_DISTRIBUTION[player_count].copy()
     else:
         roles = ROLE_DISTRIBUTION[20].copy()
         roles.extend([Role.CITIZEN] * (player_count - 20))
+    if disabled_roles:
+        roles = [Role.CITIZEN if r.name in disabled_roles and r != Role.CITIZEN else r for r in roles]
     random.shuffle(roles)
     return roles
 
@@ -149,6 +151,7 @@ class Game:
     blocked: set = field(default_factory=set)
     advokat_protected: Optional[int] = None
     sehrgar_pending: dict = field(default_factory=dict)
+    konchi_rewards: dict = field(default_factory=dict)
     phase_task: Any = None
 
     def add_player(self, user_id: int, username: str, first_name: str) -> bool:
@@ -180,8 +183,8 @@ class Game:
         if p:
             p.alive = False
 
-    def assign_roles(self):
-        roles = get_role_list(len(self.players))
+    def assign_roles(self, disabled_roles: Optional[set] = None):
+        roles = get_role_list(len(self.players), disabled_roles)
         for player, role in zip(self.players.values(), roles):
             player.role = role
 
@@ -193,6 +196,7 @@ class Game:
         self.mines_set = set()
         self.aferist_swaps = {}
         self.sehrgar_pending = {}
+        self.konchi_rewards = {}
 
     def get_display_name(self, player: Player) -> str:
         return self.aferist_swaps.get(player.user_id, player.display_name)
@@ -210,7 +214,7 @@ class Game:
         for role in [Role.KOMISSAR, Role.DOCTOR, Role.QOTIL, Role.KEZUVCHI,
                      Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.DAYDI, Role.JURNALIST,
                      Role.AFERIST, Role.MINIOR, Role.KIMYOGAR, Role.GAZABKOR,
-                     Role.JOKER, Role.SOTQIN]:
+                     Role.JOKER, Role.SOTQIN, Role.TULKI]:
             p = self.get_alive_by_role(role)
             if p:
                 required.add(p.user_id)
@@ -227,8 +231,7 @@ class Game:
         for vid, tid in self.votes.items():
             voter = self.players.get(vid)
             if voter and voter.alive:
-                w = 2 if voter.role == Role.JANOB else 1
-                counts[tid] = counts.get(tid, 0) + w
+                counts[tid] = counts.get(tid, 0) + 1
         if not counts:
             return None
         mx = max(counts.values())
