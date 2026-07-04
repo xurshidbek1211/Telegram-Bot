@@ -184,6 +184,9 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
                 )
                 if apparent:
                     komissar_found_mafia_name = target_p.display_name
+                game.komissar_investigations.setdefault(active_k.user_id, []).append(
+                    (target_p.display_name, _role_name(target_p.role))
+                )
 
     # 8. Doctor / kimyogar saves
     doc = game.get_alive_by_role(Role.DOCTOR)

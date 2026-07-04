@@ -67,6 +67,29 @@ async def _dm(bot: Bot, uid: int, text: str, kb=None):
         logger.debug(f"DM xatosi {uid}: {e}")
 
 
+def _day_status_block(game: Game) -> str:
+    alive = game.alive_players()
+    dead = [p for p in game.players.values() if not p.alive]
+
+    alive_list = "\n".join(f"  • {game.get_display_name(p)}" for p in alive) or "  —"
+
+    role_counts: dict = {}
+    for p in game.players.values():
+        if p.role:
+            role_counts[p.role] = role_counts.get(p.role, 0) + 1
+    counts_list = "\n".join(
+        f"  {ROLE_EMOJIS.get(r,'')} {ROLE_NAMES_UZ.get(r, r.value)}: *{c}*"
+        for r, c in sorted(role_counts.items(), key=lambda kv: ROLE_NAMES_UZ.get(kv[0], ""))
+    ) or "  —"
+
+    return (
+        f"📊 *Holat:*\n"
+        f"🟢 Tirik ({len(alive)}):\n{alive_list}\n"
+        f"☠️ O'lganlar: *{len(dead)}*\n\n"
+        f"🎭 *Rollar taqsimoti:*\n{counts_list}"
+    )
+
+
 _bot_username: Optional[str] = None
 
 
@@ -94,25 +117,50 @@ async def _group_link(bot: Bot, chat_id: int) -> Optional[str]:
         return None
 
 
-def _dm_entry_kb(bot_username: Optional[str], text: str, chat_id: int, payload: str) -> Optional[InlineKeyboardMarkup]:
+def _dm_entry_kb(bot_username: Optional[str], text: str, chat_id: int = None, payload: str = None) -> Optional[InlineKeyboardMarkup]:
+    """Plain button that only opens the bot's private chat — never triggers /start automatically."""
     if not bot_username:
         return None
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=text, url=f"https://t.me/{bot_username}?start={payload}_{chat_id}")
+        InlineKeyboardButton(text=text, url=f"https://t.me/{bot_username}")
     ]])
 
 
 def _lobby_kb(chat_id: int, bot_username: Optional[str] = None) -> InlineKeyboardMarkup:
-    rows = [
-        [InlineKeyboardButton(text="🎮 Qo'shilish",   callback_data=f"join:{chat_id}")],
-        [InlineKeyboardButton(text="👥 O'yinchilar", callback_data=f"show_players:{chat_id}")],
-    ]
     if bot_username:
-        rows.append([InlineKeyboardButton(
-            text="🤖 Botga o'tish",
-            url=f"https://t.me/{bot_username}?start=group_{chat_id}",
-        )])
+        rows = [[InlineKeyboardButton(
+            text="🎮 O'yinga qo'shilish",
+            url=f"https://t.me/{bot_username}?start=join_{chat_id}",
+        )]]
+    else:
+        rows = [[InlineKeyboardButton(text="🎮 Qo'shilish", callback_data=f"join:{chat_id}")]]
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _lobby_text(game: Game) -> str:
+    return (
+        f"🎮 *RO'YXATDAN O'TISH BOSHLANDI!*\n\n"
+        "Quyidagi tugmani bosib qo'shiling!\n"
+        "Tayyor bo'lganda admin /start bossin.\n\n"
+        f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
+        f"{_player_list(game)}"
+    )
+
+
+async def _update_lobby_message(bot: Bot, game: Game):
+    if not game.lobby_msg_id:
+        return
+    try:
+        bot_username = await _get_bot_username(bot)
+        await bot.edit_message_text(
+            chat_id=game.chat_id,
+            message_id=game.lobby_msg_id,
+            text=_lobby_text(game),
+            reply_markup=_lobby_kb(game.chat_id, bot_username),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
 
 
 def _player_list(game: Game, show_roles: bool = False) -> str:
@@ -228,7 +276,8 @@ async def _do_night_resolution(bot: Bot, game: Game):
             game.chat_id,
             f"🌙 *{game.day_number}-kecha yakunlandi:*\n\n{summary}\n\n"
             f"🕵🏼 *Komissar {found_mafia} mafiyani topdi!*\n\n"
-            "☀️ Darhol ovoz berish boshlanadi!",
+            "☀️ Darhol ovoz berish boshlanadi!\n\n"
+            f"{_day_status_block(game)}",
         )
         await run_vote(bot, game.chat_id)
         return
@@ -238,7 +287,8 @@ async def _do_night_resolution(bot: Bot, game: Game):
         f"🌙 *{game.day_number}-kecha yakunlandi:*\n\n{summary}\n\n"
         f"☀️ *KUN MUHOKAMASI BOSHLANDI!*\n"
         f"⏳ Muhokama vaqti: *{settings.day_secs} soniya*\n\n"
-        "Kim Mafiya ekanini aniqlashga harakat qiling!",
+        "Kim Mafiya ekanini aniqlashga harakat qiling!\n\n"
+        f"{_day_status_block(game)}",
     )
 
     await asyncio.sleep(settings.day_secs)
@@ -432,12 +482,12 @@ async def _end_game(bot: Bot, game: Game, winner: str):
     em, text = msgs.get(winner, ("🏆", "O'yin tugadi."))
 
     if winner == "mafia":
-        winner_ids = {p.user_id for p in game.players.values() if p.role in MAFIA_TEAM}
+        winner_ids = {p.user_id for p in game.players.values() if p.alive and p.role in MAFIA_TEAM}
     elif winner == "qotil":
         q = game.get_alive_by_role(Role.QOTIL)
         winner_ids = {q.user_id} if q else set()
     else:
-        winner_ids = {p.user_id for p in game.players.values() if p.role not in MAFIA_TEAM and p.role != Role.QOTIL}
+        winner_ids = {p.user_id for p in game.players.values() if p.alive and p.role not in MAFIA_TEAM and p.role != Role.QOTIL}
 
     winners = [p for p in game.players.values() if p.role and p.user_id in winner_ids]
     losers = [p for p in game.players.values() if p.role and p.user_id not in winner_ids]
@@ -717,9 +767,14 @@ async def cmd_start(msg: Message, bot: Bot):
     if msg.chat.type == "private":
         group_kb = None
         parts = (msg.text or "").split(maxsplit=1)
-        if len(parts) > 1 and parts[1].startswith("group_"):
+        payload = parts[1] if len(parts) > 1 else ""
+
+        if payload.startswith("join_"):
+            return await _handle_private_join(msg, bot, payload)
+
+        if payload.startswith("group_"):
             try:
-                gid = int(parts[1].split("_", 1)[1])
+                gid = int(payload.split("_", 1)[1])
                 link = await _group_link(bot, gid)
                 if link:
                     group_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -738,8 +793,9 @@ async def cmd_start(msg: Message, bot: Bot):
             "/endgame — O'yinni tugatish (admin)\n"
             "/players — O'yinchilar ro'yxati\n"
             "/profile — Profilingiz\n"
-            "/give N — Guruhga N olmos tashlash (har kim 1 tadan oladi)\n"
-            "/money N — Guruhga N$ tashlash (har kim ulush oladi)\n"
+            "/tekshiruv — Komissar tekshiruv tarixi (shaxsiy)\n"
+            "/give N — Javob sifatida: to'g'ridan-to'g'ri o'tkazish. Aks holda: guruhga N olmos tashlash\n"
+            "/money N — Javob sifatida: to'g'ridan-to'g'ri o'tkazish. Aks holda: guruhga N$ tashlash\n"
             "/shop — Do'kon\n"
             "/roleshop — Rol do'koni\n"
             "/sozlash — Guruh sozlamalari (admin)\n"
@@ -771,18 +827,42 @@ async def _open_lobby(msg: Message, bot: Bot):
     games[chat_id] = Game(chat_id=chat_id)
     game = games[chat_id]
     user = msg.from_user
-    game.add_player(user.id, user.username or "", user.first_name)
+    game.add_player(user.id, user.username or "", user.first_name, user.last_name or "")
 
     bot_username = await _get_bot_username(bot)
-    await msg.answer(
-        f"🎮 *RO'YXATDAN O'TISH BOSHLANDI!*\n\n"
-        f"👤 *{escape_md(user.first_name)}* o'yinni yaratdi.\n\n"
-        "Quyidagi tugmani bosib qo'shiling!\n"
-        "Tayyor bo'lganda admin /start bossin.\n\n"
-        f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
-        f"{_player_list(game)}",
+    sent = await msg.answer(
+        _lobby_text(game),
         reply_markup=_lobby_kb(chat_id, bot_username),
     )
+    game.lobby_msg_id = sent.message_id
+
+
+async def _handle_private_join(msg: Message, bot: Bot, payload: str):
+    """Handle a player joining via the private-chat deep link from the group's Join button."""
+    try:
+        gid = int(payload.split("_", 1)[1])
+    except (ValueError, IndexError):
+        gid = None
+
+    user = msg.from_user
+    game = games.get(gid) if gid is not None else None
+
+    if not game or game.phase != Phase.LOBBY:
+        return await msg.answer("⚠️ Bu o'yin lobbysi endi faol emas.")
+
+    link = await _group_link(bot, gid)
+    return_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔙 Guruhga qaytish", url=link)
+    ]]) if link else None
+
+    if user.id in game.players:
+        return await msg.answer("ℹ️ Siz allaqachon o'yinga qo'shilgansiz.", reply_markup=return_kb)
+
+    if game.add_player(user.id, user.username or "", user.first_name, user.last_name or ""):
+        await msg.answer("✅ Siz o'yinga muvaffaqiyatli qo'shildingiz.", reply_markup=return_kb)
+        await _update_lobby_message(bot, game)
+    else:
+        await msg.answer("❌ Lobby to'lgan.", reply_markup=return_kb)
 
 
 @router.message(Command("game"))
@@ -1260,6 +1340,24 @@ async def cmd_profile(msg: Message):
     await msg.answer(_profile_text(user.id, user.first_name))
 
 
+@router.message(Command("tekshiruv"))
+async def cmd_tekshiruv(msg: Message):
+    if msg.chat.type != "private":
+        return await msg.answer("⚠️ Bu buyruq faqat shaxsiy chatda ishlaydi.")
+
+    user = msg.from_user
+    game = next((g for g in games.values() if user.id in g.players and g.phase != Phase.ENDED), None)
+    if not game:
+        return await msg.answer("ℹ️ Siz hozir faol o'yinda emassiz.")
+
+    history = game.komissar_investigations.get(user.id)
+    if not history:
+        return await msg.answer("ℹ️ Siz hali hech kimni tekshirmagansiz.")
+
+    lines = [f"  {i}. *{name}* — {role}" for i, (name, role) in enumerate(history, 1)]
+    await msg.answer("🕵🏼 *Tekshiruv tarixingiz:*\n\n" + "\n".join(lines))
+
+
 @router.message(Command("give"))
 async def cmd_give(msg: Message):
     if msg.chat.type == "private":
@@ -1273,6 +1371,20 @@ async def cmd_give(msg: Message):
     amount = int(parts[1])
     if amount <= 0:
         return await msg.answer("❌ Miqdor musbat son bo'lishi kerak.")
+
+    if msg.reply_to_message and msg.reply_to_message.from_user:
+        target = msg.reply_to_message.from_user
+        if target.is_bot:
+            return await msg.answer("❌ Botga o'tkazib bo'lmaydi.")
+        if target.id == giver.id:
+            return await msg.answer("❌ O'zingizga o'tkazib bo'lmaydi.")
+        get_profile(giver.id, giver.first_name)
+        get_profile(target.id, target.first_name)
+        if not transfer_diamond(giver.id, target.id, amount):
+            return await msg.answer("❌ Yetarli olmos yo'q.")
+        return await msg.answer(
+            f"💎 *{escape_md(giver.first_name)}* → *{escape_md(target.first_name)}*ga *{amount}* olmos o'tkazdi!"
+        )
 
     giver_p = get_profile(giver.id, giver.first_name)
     if not giver_p.infinite_diamond and giver_p.diamond < amount:
@@ -1342,6 +1454,20 @@ async def cmd_money(msg: Message):
     amount = int(parts[1])
     if amount <= 0:
         return await msg.answer("❌ Miqdor musbat son bo'lishi kerak.")
+
+    if msg.reply_to_message and msg.reply_to_message.from_user:
+        target = msg.reply_to_message.from_user
+        if target.is_bot:
+            return await msg.answer("❌ Botga o'tkazib bo'lmaydi.")
+        if target.id == giver.id:
+            return await msg.answer("❌ O'zingizga o'tkazib bo'lmaydi.")
+        get_profile(giver.id, giver.first_name)
+        get_profile(target.id, target.first_name)
+        if not transfer_dollar(giver.id, target.id, amount):
+            return await msg.answer("❌ Yetarli pul yo'q.")
+        return await msg.answer(
+            f"💵 *{escape_md(giver.first_name)}* → *{escape_md(target.first_name)}*ga *{amount}$* o'tkazdi!"
+        )
 
     giver_p = get_profile(giver.id, giver.first_name)
     if not giver_p.infinite_dollar and giver_p.dollar < amount:
@@ -1751,7 +1877,7 @@ async def cb_join(call: CallbackQuery):
         return await call.answer("⚠️ Lobby faol emas.", show_alert=True)
 
     user = call.from_user
-    if game.add_player(user.id, user.username or "", user.first_name):
+    if game.add_player(user.id, user.username or "", user.first_name, user.last_name or ""):
         await call.answer(f"✅ Qo'shildingiz! Jami: {len(game.players)} o'yinchi.")
         await call.message.edit_text(
             f"🎮 *YANGI MAFIYA O'YINI!*\n\n"
@@ -1772,18 +1898,6 @@ async def cb_join(call: CallbackQuery):
             await call.answer("❌ Siz allaqachon o'yindasiz!", show_alert=True)
         else:
             await call.answer("❌ Lobby to'lgan.", show_alert=True)
-
-
-@router.callback_query(F.data.startswith("show_players:"))
-async def cb_show_players(call: CallbackQuery):
-    chat_id = int(call.data.split(":")[1])
-    game = games.get(chat_id)
-    if not game:
-        return await call.answer("O'yin topilmadi.", show_alert=True)
-    await call.answer(
-        f"O'yinchilar ({len(game.players)}):\n{_player_list(game)}",
-        show_alert=True,
-    )
 
 
 # ── Night action callbacks ──
@@ -2086,6 +2200,14 @@ async def cb_dvote(call: CallbackQuery, bot: Bot):
     try:
         await call.message.edit_text(
             f"🗳️ *Ovoz qabul qilindi!*\n\n✅ Siz *{game.get_display_name(target)}*ga ovoz berdingiz."
+        )
+    except Exception:
+        pass
+
+    try:
+        await bot.send_message(
+            cid,
+            f"🗳️ *{game.get_display_name(voter)}* ovoz berdi: *{game.get_display_name(target)}*",
         )
     except Exception:
         pass

@@ -133,6 +133,7 @@ class Player:
     user_id: int
     username: str
     first_name: str
+    last_name: str = ""
     role: Optional[Role] = None
     alive: bool = True
     gazabkor_targets: list = field(default_factory=list)
@@ -140,7 +141,7 @@ class Player:
 
     @property
     def display_name(self) -> str:
-        raw = f"@{self.username}" if self.username else self.first_name
+        raw = f"{self.first_name} {self.last_name}".strip() if self.last_name else self.first_name
         return escape_md(raw)
 
 
@@ -168,11 +169,13 @@ class Game:
     vote_msg_id: Optional[int] = None
     give_drops: dict = field(default_factory=dict)
     money_drops: dict = field(default_factory=dict)
+    lobby_msg_id: Optional[int] = None
+    komissar_investigations: dict = field(default_factory=dict)
 
-    def add_player(self, user_id: int, username: str, first_name: str) -> bool:
+    def add_player(self, user_id: int, username: str, first_name: str, last_name: str = "") -> bool:
         if user_id in self.players or len(self.players) >= MAX_PLAYERS:
             return False
-        self.players[user_id] = Player(user_id=user_id, username=username, first_name=first_name)
+        self.players[user_id] = Player(user_id=user_id, username=username, first_name=first_name, last_name=last_name)
         return True
 
     def remove_player(self, user_id: int) -> bool:
