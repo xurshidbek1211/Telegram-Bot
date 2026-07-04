@@ -161,6 +161,7 @@ class Game:
     hang_confirm_msg_id: Optional[int] = None
     komissar_found_mafia: Optional[str] = None
     phase_task: Any = None
+    group_link: Optional[str] = None
 
     def add_player(self, user_id: int, username: str, first_name: str) -> bool:
         if user_id in self.players or len(self.players) >= MAX_PLAYERS:

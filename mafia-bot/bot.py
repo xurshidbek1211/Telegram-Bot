@@ -4,6 +4,7 @@ import os
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import BotCommand
 from handlers import router
 
 logging.basicConfig(
@@ -56,6 +57,22 @@ async def main():
     # Make sure no leftover webhook is registered — start_polling silently
     # receives nothing if Telegram still thinks a webhook is active.
     await bot.delete_webhook(drop_pending_updates=True)
+
+    await bot.set_my_commands([
+        BotCommand(command="game", description="🎮 Ro'yxatdan o'tishni boshlash"),
+        BotCommand(command="start", description="🟢 O'yinni boshlash / botni ishga tushirish"),
+        BotCommand(command="players", description="👥 O'yinchilar ro'yxati"),
+        BotCommand(command="endgame", description="🛑 O'yinni tugatish"),
+        BotCommand(command="kick", description="👢 O'yinchini chiqarish"),
+        BotCommand(command="roles", description="🎭 Rollar ro'yxati"),
+        BotCommand(command="profile", description="👤 Profilni ko'rish"),
+        BotCommand(command="give", description="💎 Olmos berish"),
+        BotCommand(command="money", description="💵 Pul berish"),
+        BotCommand(command="shop", description="🛒 Do'kon"),
+        BotCommand(command="stats", description="📊 Statistika"),
+        BotCommand(command="settings", description="⚙️ Sozlamalar"),
+        BotCommand(command="help", description="❓ Yordam"),
+    ])
 
     logging.info("Mafiya boti ishga tushmoqda...")
     await dp.start_polling(bot)
