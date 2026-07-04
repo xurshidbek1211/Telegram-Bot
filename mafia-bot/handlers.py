@@ -14,7 +14,7 @@ from game import (
 )
 from stats import load_stats, save_stats
 from night import resolve_night
-from profiles import get_profile, save_profile, transfer_diamond, record_game_start, record_win, add_dollar, add_diamond
+from profiles import get_profile, save_profile, transfer_diamond, transfer_dollar, record_game_start, record_win, add_dollar, add_diamond
 from settings import get_settings, save_settings, ChatSettings
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ ROLE_NAMES_UZ = {
     Role.SEHRGAR: "Sehrgar", Role.GAZABKOR: "G'azabkor",
     Role.JOKER: "Joker", Role.KIMYOGAR: "Kimyogar",
     Role.MINIOR: "Minior", Role.KONCHI: "Konchi",
-    Role.TULKI: "Tulki",
+    Role.TULKI: "Tulki", Role.LABARANT: "Labarant",
 }
 
 PASSIVE_NIGHT_ROLES = {
@@ -176,6 +176,19 @@ async def _do_night_resolution(bot: Bot, game: Game):
         await _end_game(bot, game, winner)
         return
 
+    found_mafia = game.komissar_found_mafia
+    game.komissar_found_mafia = None
+
+    if found_mafia:
+        await bot.send_message(
+            game.chat_id,
+            f"🌙 *{game.day_number}-kecha yakunlandi:*\n\n{summary}\n\n"
+            f"🕵🏼 *Komissar {found_mafia} mafiyani topdi!*\n\n"
+            "☀️ Darhol ovoz berish boshlanadi!",
+        )
+        await run_vote(bot, game.chat_id)
+        return
+
     await bot.send_message(
         game.chat_id,
         f"🌙 *{game.day_number}-kecha yakunlandi:*\n\n{summary}\n\n"
@@ -210,6 +223,52 @@ async def run_vote(bot: Bot, chat_id: int):
     await _do_vote_resolution(bot, game)
 
 
+def _like_dislike_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="👍 Like (0)", callback_data="hangvote:like"),
+        InlineKeyboardButton(text="👎 Dislike (0)", callback_data="hangvote:dislike"),
+    ]])
+
+
+async def _run_hang_confirmation(bot: Bot, game: Game, eliminated, summary: str) -> bool:
+    settings = get_settings(game.chat_id)
+    secs = settings.hang_confirm_secs
+    game.hang_confirm_votes = {}
+
+    msg = await bot.send_message(
+        game.chat_id,
+        f"🗳️ *Ovoz natijalari — {game.day_number}-kun:*\n{summary}\n\n"
+        f"⚖️ *{eliminated.display_name}* osilmoqchi!\n"
+        "Rostdan ham shu o'yinchini osmoqchimisiz?\n"
+        f"⏳ {secs} soniya ichida ovoz bering:",
+        reply_markup=_like_dislike_kb(),
+    )
+    game.hang_confirm_msg_id = msg.message_id
+
+    await asyncio.sleep(secs)
+
+    likes = sum(1 for v in game.hang_confirm_votes.values() if v == "like")
+    dislikes = sum(1 for v in game.hang_confirm_votes.values() if v == "dislike")
+    confirmed = likes > dislikes
+
+    result_text = (
+        f"👍 Like: *{likes}* | 👎 Dislike: *{dislikes}*\n\n"
+        + (f"☠️ Ko'pchilik rozi — *{eliminated.display_name}* osiladi!"
+           if confirmed else
+           f"🕊️ Ko'pchilik rozi emas — *{eliminated.display_name}* tirik qoladi!")
+    )
+    try:
+        await bot.edit_message_text(
+            chat_id=game.chat_id, message_id=msg.message_id,
+            text=result_text,
+        )
+    except Exception:
+        await bot.send_message(game.chat_id, result_text)
+
+    game.hang_confirm_votes = {}
+    return confirmed
+
+
 async def _do_vote_resolution(bot: Bot, game: Game):
     if game.phase != Phase.VOTING:
         return
@@ -241,6 +300,14 @@ async def _do_vote_resolution(bot: Bot, game: Game):
     eliminated = game.get_player_by_id(eliminated_id)
     role_name = ROLE_NAMES_UZ.get(eliminated.role, "")
     emoji = ROLE_EMOJIS.get(eliminated.role, "")
+
+    settings = get_settings(game.chat_id)
+    if settings.hang_confirm_enabled:
+        confirmed = await _run_hang_confirmation(bot, game, eliminated, summary)
+        if not confirmed:
+            game.day_number += 1
+            await run_night(bot, game.chat_id)
+            return
 
     # hang_protect item cancels the elimination
     from profiles import get_profile, save_profile as _sp
@@ -441,16 +508,28 @@ async def _send_night_actions(bot: Bot, game: Game):
                 f"👩🏼‍💻 Intervyu olish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.KOMISSAR:
-            kb = _target_kb(game, "nkom", actor_id=uid)
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🔍 Tekshirish", callback_data=f"nkommode:check:{chat_id}"),
+                InlineKeyboardButton(text="🔫 O'ldirish", callback_data=f"nkommode:kill:{chat_id}"),
+            ]])
             await _dm(bot, uid,
                 f"🌙 *{game.day_number}-kecha*\n\n"
-                f"🕵🏼 Tekshirish uchun o'yinchini tanlang. Mafiya bo'lsa — u o'ldiriladi ({secs}s):", kb)
+                f"🕵🏼 Bu kecha nima qilasiz ({secs}s)?", kb)
 
         elif role == Role.SERZHANT and not game.get_alive_by_role(Role.KOMISSAR):
-            kb = _target_kb(game, "nkom", actor_id=uid)
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="🔍 Tekshirish", callback_data=f"nkommode:check:{chat_id}"),
+                InlineKeyboardButton(text="🔫 O'ldirish", callback_data=f"nkommode:kill:{chat_id}"),
+            ]])
             await _dm(bot, uid,
                 f"🌙 *{game.day_number}-kecha*\n\n"
-                f"👮🏼 Siz hozir Komissar vazifasini bajaryapsiz. Tekshiring ({secs}s):", kb)
+                f"👮🏼 Siz hozir Komissar vazifasini bajaryapsiz. Nima qilasiz ({secs}s)?", kb)
+
+        elif role == Role.LABARANT:
+            kb = _target_kb(game, "nlab", actor_id=uid)
+            await _dm(bot, uid,
+                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"🧪 O'yinchi tanlang — Mafiya bo'lsa himoya qilasiz, boshqa bo'lsa zaharlaysiz ({secs}s):", kb)
 
         elif role == Role.DOCTOR:
             kb = _target_kb(game, "ndoc", actor_id=uid, include_self=True)
@@ -1524,6 +1603,24 @@ async def cb_njurn(call: CallbackQuery):
     await _night_cb(call, Role.JURNALIST, int(tid), int(cid), "👩🏼‍💻 Manzil tanlandi")
 
 
+@router.callback_query(F.data.startswith("nkommode:"))
+async def cb_nkommode(call: CallbackQuery):
+    _, mode, cid = call.data.split(":")
+    cid = int(cid)
+    game = games.get(cid)
+    if not game or game.phase != Phase.NIGHT:
+        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
+    game.night_actions["komissar_mode"] = mode
+    actor = game.get_player_by_id(call.from_user.id)
+    kb = _target_kb(game, "nkom", actor_id=actor.user_id if actor else None)
+    if mode == "kill":
+        text = "🔫 *O'ldirish* uchun o'yinchini tanlang:"
+    else:
+        text = "🔍 *Tekshirish* uchun o'yinchini tanlang:"
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer()
+
+
 @router.callback_query(F.data.startswith("nkom:"))
 async def cb_nkom(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
@@ -1531,7 +1628,15 @@ async def cb_nkom(call: CallbackQuery):
     if not game or game.phase != Phase.NIGHT:
         return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
     key = Role.KOMISSAR if game.get_alive_by_role(Role.KOMISSAR) else Role.SERZHANT
-    await _night_cb(call, key, int(tid), int(cid), "🕵🏼 Tekshirilmoqda")
+    mode = game.night_actions.get("komissar_mode", "check")
+    confirm = "🔫 Nishon tanlandi" if mode == "kill" else "🕵🏼 Tekshirilmoqda"
+    await _night_cb(call, key, int(tid), int(cid), confirm)
+
+
+@router.callback_query(F.data.startswith("nlab:"))
+async def cb_nlab(call: CallbackQuery):
+    _, tid, cid = call.data.split(":")
+    await _night_cb(call, Role.LABARANT, int(tid), int(cid), "🧪 Nishon tanlandi")
 
 
 @router.callback_query(F.data.startswith("ndoc:"))
@@ -1681,6 +1786,36 @@ async def cb_sehrgar(call: CallbackQuery):
 
 
 # ── Group voting callbacks ──
+
+@router.callback_query(F.data.startswith("hangvote:"))
+async def cb_hangvote(call: CallbackQuery):
+    _, choice = call.data.split(":")
+    game = None
+    for g in games.values():
+        if g.hang_confirm_msg_id == call.message.message_id:
+            game = g
+            break
+    if not game:
+        return await call.answer("⚠️ Bu ovoz berish tugagan.", show_alert=True)
+
+    voter = game.get_player_by_id(call.from_user.id)
+    if not voter or not voter.alive:
+        return await call.answer("⚠️ Siz faol o'yinchi emassiz.", show_alert=True)
+
+    game.hang_confirm_votes[voter.user_id] = choice
+    likes = sum(1 for v in game.hang_confirm_votes.values() if v == "like")
+    dislikes = sum(1 for v in game.hang_confirm_votes.values() if v == "dislike")
+    await call.answer(f"✅ {'👍 Like' if choice == 'like' else '👎 Dislike'} bosdingiz")
+    try:
+        await call.message.edit_reply_markup(
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=f"👍 Like ({likes})", callback_data="hangvote:like"),
+                InlineKeyboardButton(text=f"👎 Dislike ({dislikes})", callback_data="hangvote:dislike"),
+            ]])
+        )
+    except Exception:
+        pass
+
 
 @router.callback_query(F.data.startswith("gvote:"))
 async def cb_gvote(call: CallbackQuery):

@@ -138,28 +138,52 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     if konchi and actions.get("konchi_mine"):
         pending[konchi.user_id] = "konchi_mine"
 
+    # 6b. Labarant — protects Mafia team targets, poisons everyone else.
+    # Mafia doesn't know who the Labarant is, so they get no ally info about them.
+    labarant = game.get_alive_by_role(Role.LABARANT)
+    lab_t = actions.get(Role.LABARANT)
+    if labarant and lab_t and lab_t in alive and not blocked(labarant.user_id):
+        lab_target = alive[lab_t]
+        if lab_target.role in MAFIA_TEAM:
+            if lab_t in pending:
+                pending.pop(lab_t)
+            await _dm(bot, labarant.user_id, f"🧪 *{lab_target.display_name}*ni himoya qildingiz.")
+        else:
+            pending[lab_t] = "labarant"
+            await _dm(bot, labarant.user_id, f"🧪 *{lab_target.display_name}*ni zaharladingiz.")
+
+    # Mafia's bullet can't touch the Labarant — only Komissar/Kimyogar can kill them.
+    if labarant and pending.get(labarant.user_id) == "mafia":
+        pending.pop(labarant.user_id)
+
     # 7. Komissar investigation (documents item fakes non-mafia result)
     komissar = game.get_alive_by_role(Role.KOMISSAR)
     serzhant = game.get_alive_by_role(Role.SERZHANT)
     active_k = komissar or (serzhant if not komissar else None)
     komissar_result = ""
+    komissar_found_mafia_name = None
+    komissar_mode = actions.get("komissar_mode", "check")
     if active_k and not blocked(active_k.user_id):
         k_t = actions.get(Role.KOMISSAR) or actions.get(Role.SERZHANT)
         if k_t and k_t in alive:
             target_p = alive[k_t]
-            is_mafia = target_p.role in MAFIA_TEAM
-            shielded = k_t == game.advokat_protected
-            doc_shield = is_mafia and protection_enabled and _use_item(k_t, "documents")
-            if doc_shield:
-                await _dm(bot, k_t, "📁 *Hujjat himoyangiz* ishga tushdi! Komissar sizi tekshirdi, lekin siz fuqaro ko'rindingiz.")
-            apparent = is_mafia and not shielded and not doc_shield
-            komissar_result = (
-                f"🔴 *{target_p.display_name}* — *MAFIYA!*"
-                if apparent else
-                f"🟢 *{target_p.display_name}* — Mafiya emas."
-            )
-            if apparent:
-                pending[k_t] = "komissar"
+            if komissar_mode == "kill":
+                pending[k_t] = "komissar_kill"
+                komissar_result = f"🔫 *{target_p.display_name}* otib tashlandi!"
+            else:
+                is_mafia = target_p.role in MAFIA_TEAM
+                shielded = k_t == game.advokat_protected
+                doc_shield = is_mafia and protection_enabled and _use_item(k_t, "documents")
+                if doc_shield:
+                    await _dm(bot, k_t, "📁 *Hujjat himoyangiz* ishga tushdi! Komissar sizi tekshirdi, lekin siz fuqaro ko'rindingiz.")
+                apparent = is_mafia and not shielded and not doc_shield
+                komissar_result = (
+                    f"🔴 *{target_p.display_name}* — *MAFIYA!*"
+                    if apparent else
+                    f"🟢 *{target_p.display_name}* — Mafiya emas."
+                )
+                if apparent:
+                    komissar_found_mafia_name = target_p.display_name
 
     # 8. Doctor / kimyogar saves
     doc = game.get_alive_by_role(Role.DOCTOR)
@@ -175,7 +199,7 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     sehrgar = game.get_alive_by_role(Role.SEHRGAR)
     if sehrgar and sehrgar.user_id in pending:
         cause = pending[sehrgar.user_id]
-        if cause in ("mafia", "komissar", "qotil"):
+        if cause in ("mafia", "komissar", "komissar_kill", "qotil"):
             pending.pop(sehrgar.user_id)
             game.sehrgar_pending[cause] = True
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -183,7 +207,7 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
                 [InlineKeyboardButton(text="🕊️ Rahm qilish", callback_data=f"sehrgar:spare:{game.chat_id}")],
                 [InlineKeyboardButton(text="⚡ O'ldirish", callback_data=f"sehrgar:kill:{game.chat_id}")],
             ])
-            cause_label = {"mafia": "Mafiya", "komissar": "Komissar", "qotil": "Qotil"}.get(cause, cause)
+            cause_label = {"mafia": "Mafiya", "komissar": "Komissar", "komissar_kill": "Komissar", "qotil": "Qotil"}.get(cause, cause)
             await _dm(bot, sehrgar.user_id,
                 f"🧙‍ *{cause_label} sizni o'ldirmoqchi bo'ldi — lekin kuchsiz!*\n\nNima qilasiz?", kb)
 
@@ -225,6 +249,7 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
             "yollanma": {Role.YOLLANMA_QOTIL},
             "qotil": {Role.QOTIL},
             "kimyogar": {Role.KIMYOGAR},
+            "komissar_kill": {Role.KOMISSAR, Role.SERZHANT},
         }
         for p in game.alive_players():
             if p.role in role_map.get(cause, set()):
@@ -251,7 +276,7 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
         if cause in ("mafia", "yollanma"):
             bori_transform = "mafia"
             pending.pop(bori.user_id)
-        elif cause == "komissar":
+        elif cause in ("komissar", "komissar_kill"):
             bori_transform = "serzhant"
             pending.pop(bori.user_id)
 
@@ -337,10 +362,10 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
 
     # 20. Komissar result DM
     if komissar_result:
-        if komissar and komissar.alive:
-            await _dm(bot, komissar.user_id, f"🔍 *Tekshiruv natijasi:*\n{komissar_result}")
+        if active_k and active_k.alive:
+            await _dm(bot, active_k.user_id, f"🔍 *Tekshiruv natijasi:*\n{komissar_result}")
         new_s = game.get_alive_by_role(Role.SERZHANT)
-        if new_s and new_s.role == Role.SERZHANT:
+        if new_s and new_s.role == Role.SERZHANT and new_s.user_id != active_k.user_id:
             await _dm(bot, new_s.user_id, f"👮🏼 *Komissar tekshiruv natijasi:*\n{komissar_result}")
 
     # 21. Daydi report
@@ -413,6 +438,7 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
                     f"🧟 *{tp.display_name}* ro'yxatga qo'shildi. Jami: *{len(gazabkor.gazabkor_targets)}* kishi.\n"
                     f"Kamida 3 ta to'plab, o'zingizni tanlang!")
 
+    game.komissar_found_mafia = komissar_found_mafia_name
     return events
 
 

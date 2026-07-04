@@ -158,6 +158,8 @@ class Game:
     sehrgar_pending: dict = field(default_factory=dict)
     konchi_rewards: dict = field(default_factory=dict)
     hang_confirm_votes: dict = field(default_factory=dict)
+    hang_confirm_msg_id: Optional[int] = None
+    komissar_found_mafia: Optional[str] = None
     phase_task: Any = None
 
     def add_player(self, user_id: int, username: str, first_name: str) -> bool:
@@ -204,6 +206,7 @@ class Game:
         self.sehrgar_pending = {}
         self.konchi_rewards = {}
         self.hang_confirm_votes = {}
+        self.komissar_found_mafia = None
 
     def get_display_name(self, player: Player) -> str:
         return self.aferist_swaps.get(player.user_id, player.display_name)
@@ -221,7 +224,7 @@ class Game:
         for role in [Role.KOMISSAR, Role.DOCTOR, Role.QOTIL, Role.KEZUVCHI,
                      Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.DAYDI, Role.JURNALIST,
                      Role.AFERIST, Role.MINIOR, Role.KIMYOGAR, Role.GAZABKOR,
-                     Role.JOKER, Role.SOTQIN, Role.TULKI]:
+                     Role.JOKER, Role.SOTQIN, Role.TULKI, Role.LABARANT]:
             p = self.get_alive_by_role(role)
             if p:
                 required.add(p.user_id)
@@ -247,8 +250,8 @@ class Game:
 
     def check_win_condition(self) -> Optional[str]:
         alive = self.alive_players()
-        mafia_count = sum(1 for p in alive if p.role in MAFIA_TEAM)
-        citizen_count = sum(1 for p in alive if p.role not in MAFIA_TEAM and p.role != Role.QOTIL)
+        mafia_count = sum(1 for p in alive if p.role in MAFIA_TEAM or p.role == Role.LABARANT)
+        citizen_count = sum(1 for p in alive if p.role not in MAFIA_TEAM and p.role not in (Role.QOTIL, Role.LABARANT))
         qotil = self.get_alive_by_role(Role.QOTIL)
         if mafia_count == 0 and qotil is None:
             return "citizens"
