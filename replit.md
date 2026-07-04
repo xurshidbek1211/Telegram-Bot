@@ -7,6 +7,15 @@ A Telegram group chat bot that runs a full Mafia party game with roles, night/da
 - `cd mafia-bot && python bot.py` — run the Telegram bot (managed via the "Mafia Bot" workflow)
 - Required env: `TELEGRAM_BOT_TOKEN` — Telegram bot token from @BotFather
 
+## Deploying on Render
+
+The bot can be deployed to Render as a **Web Service** using the `render.yaml` blueprint at the repo root (New → Blueprint, point it at this repo).
+
+- `rootDir: mafia-bot`, build: `pip install -r requirements.txt`, start: `python bot.py`.
+- Set the `TELEGRAM_BOT_TOKEN` (and optionally `OWNER_ID`) secrets in the Render dashboard — `render.yaml` marks them `sync: false` so Render prompts for them instead of storing them in the file.
+- Render web services require something bound to the `PORT` it assigns, or the deploy never goes "live". `bot.py` detects `PORT` (Render sets it automatically) and starts a tiny `aiohttp` server that answers `/` and `/healthz` for Render's health checks, while the actual bot keeps talking to Telegram via long polling in the background — no public webhook URL or TLS setup needed.
+- On Replit (no `PORT` env var set) this health server is skipped entirely and the bot behaves exactly as before.
+
 ## Stack
 
 - Python 3.11
