@@ -4,6 +4,8 @@ from enum import Enum
 from dataclasses import dataclass, field
 from typing import Optional, Any
 
+from mdutil import escape_md
+
 
 class Role(Enum):
     DON = "Don"
@@ -138,7 +140,8 @@ class Player:
 
     @property
     def display_name(self) -> str:
-        return f"@{self.username}" if self.username else self.first_name
+        raw = f"@{self.username}" if self.username else self.first_name
+        return escape_md(raw)
 
 
 @dataclass

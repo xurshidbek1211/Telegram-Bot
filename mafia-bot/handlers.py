@@ -18,6 +18,7 @@ from night import resolve_night
 from profiles import get_profile, save_profile, transfer_diamond, transfer_dollar, record_game_start, record_win, add_dollar, add_diamond, OWNER_ID
 from settings import get_settings, save_settings, ChatSettings
 from bot_config import get_promo_channel, set_promo_channel
+from mdutil import escape_md
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -775,7 +776,7 @@ async def _open_lobby(msg: Message, bot: Bot):
     bot_username = await _get_bot_username(bot)
     await msg.answer(
         f"🎮 *RO'YXATDAN O'TISH BOSHLANDI!*\n\n"
-        f"👤 *{user.first_name}* o'yinni yaratdi.\n\n"
+        f"👤 *{escape_md(user.first_name)}* o'yinni yaratdi.\n\n"
         "Quyidagi tugmani bosib qo'shiling!\n"
         "Tayyor bo'lganda admin /start bossin.\n\n"
         f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
@@ -878,7 +879,7 @@ async def cmd_leave(msg: Message):
 
     game.remove_player(user.id)
     await msg.answer(
-        f"👋 *{user.first_name}* lobbydan chiqdi.\n\n"
+        f"👋 *{escape_md(user.first_name)}* lobbydan chiqdi.\n\n"
         f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
         f"{_player_list(game)}",
         reply_markup=_lobby_kb(chat_id),
@@ -1199,7 +1200,7 @@ def _promo_text() -> str:
     if not channel:
         return ""
     link = channel if channel.startswith("http") or channel.startswith("@") else f"@{channel}"
-    return f"\n\n📢 *{link}* kanaliga a'zo bo'ling va mukofotlaringiz *2x* bo'lsin!"
+    return f"\n\n📢 *{escape_md(link)}* kanaliga a'zo bo'ling va mukofotlaringiz *2x* bo'lsin!"
 
 
 @router.message(Command("kanal"))
@@ -1211,13 +1212,13 @@ async def cmd_kanal(msg: Message):
     if len(parts) < 2 or not parts[1].strip():
         current = get_promo_channel()
         return await msg.answer(
-            f"📢 Hozirgi reklama kanali: *{current or 'o‘rnatilmagan'}*\n\n"
+            f"📢 Hozirgi reklama kanali: *{escape_md(current) if current else 'o‘rnatilmagan'}*\n\n"
             "O'rnatish uchun: `/kanal @username` yoki `/kanal https://t.me/...`"
         )
 
     channel = parts[1].strip()
     set_promo_channel(channel)
-    await msg.answer(f"✅ Reklama kanali o'rnatildi: *{channel}*")
+    await msg.answer(f"✅ Reklama kanali o'rnatildi: *{escape_md(channel)}*")
 
 
 def _profile_text(user_id: int, first_name: str) -> str:
@@ -1242,7 +1243,7 @@ def _profile_text(user_id: int, first_name: str) -> str:
     roles_str = ", ".join(p.active_roles) if p.active_roles else "Yo'q"
 
     return (
-        f"👤 *{first_name}*\n\n"
+        f"👤 *{escape_md(first_name)}*\n\n"
         f"💵 Dollar: *{dollar_str}*\n"
         f"💎 Olmos: *{diamond_str}*\n\n"
         f"🎯 G'alabalar: *{p.wins}*\n"
@@ -1289,7 +1290,7 @@ async def cmd_give(msg: Message):
     game.give_drops[drop_id] = {"remaining": amount, "claimed": set(), "giver": giver.id}
 
     await msg.answer(
-        f"💎 *{giver.first_name}* *{amount}* olmos tashladi!\n\n"
+        f"💎 *{escape_md(giver.first_name)}* *{amount}* olmos tashladi!\n\n"
         f"Har bir o'yinchi faqat *1 marta* bosib, *1 olmos* olishi mumkin.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="💎 Olish", callback_data=f"claimdiamond:{drop_id}:{msg.chat.id}")
@@ -1360,7 +1361,7 @@ async def cmd_money(msg: Message):
     game.money_drops[drop_id] = {"per_claim": per_claim, "claimed": set(), "giver": giver.id, "pool": amount}
 
     await msg.answer(
-        f"💵 *{giver.first_name}* *{amount}$* tashladi!\n\n"
+        f"💵 *{escape_md(giver.first_name)}* *{amount}$* tashladi!\n\n"
         f"Har bir o'yinchi bosib *{per_claim}$* olishi mumkin (faqat 1 marta).",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="💵 Olish", callback_data=f"claimmoney:{drop_id}:{msg.chat.id}")
@@ -1408,18 +1409,18 @@ async def cmd_kick(msg: Message, bot: Bot):
         return await msg.answer("⚠️ Faol o'yin yo'q.")
 
     if target.id not in game.players:
-        return await msg.answer(f"⚠️ *{target.first_name}* bu o'yinda emas.")
+        return await msg.answer(f"⚠️ *{escape_md(target.first_name)}* bu o'yinda emas.")
 
     if game.phase == Phase.LOBBY:
         game.remove_player(target.id)
-        await msg.answer(f"👢 *{target.first_name}* lobbydan chiqarildi.")
+        await msg.answer(f"👢 *{escape_md(target.first_name)}* lobbydan chiqarildi.")
     else:
         game.eliminate_player(target.id)
         tp = game.get_player_by_id(target.id)
         role_str = ""
         if tp and tp.role:
             role_str = f" Roli: {ROLE_EMOJIS.get(tp.role,'')} {ROLE_NAMES_UZ.get(tp.role,'')}"
-        await msg.answer(f"👢 *{target.first_name}* admin tomonidan chiqarildi.{role_str}")
+        await msg.answer(f"👢 *{escape_md(target.first_name)}* admin tomonidan chiqarildi.{role_str}")
         winner = game.check_win_condition()
         if winner:
             asyncio.create_task(_end_game(bot, game, winner))
@@ -1686,7 +1687,7 @@ async def cb_shop_profile(call: CallbackQuery):
 
     await call.answer()
     await call.message.edit_text(
-        f"👤 *{call.from_user.first_name}*\n\n"
+        f"👤 *{escape_md(call.from_user.first_name)}*\n\n"
         f"💵 Dollar: *{p.dollar}$*\n"
         f"💎 Olmos: *{diamond_str}*\n\n"
         f"🎯 G'alabalar: *{p.wins}*  |  🎲 O'yinlar: *{p.games}*  |  📈 {win_rate}\n\n"
@@ -1733,7 +1734,7 @@ async def cb_newgame_btn(call: CallbackQuery, bot: Bot):
     await bot.send_message(
         chat_id,
         f"🎮 *RO'YXATDAN O'TISH BOSHLANDI!*\n\n"
-        f"👤 *{user.first_name}* o'yinni yaratdi.\n\n"
+        f"👤 *{escape_md(user.first_name)}* o'yinni yaratdi.\n\n"
         "Quyidagi tugmani bosib qo'shiling!\n"
         "Tayyor bo'lganda admin /start bossin.\n\n"
         f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
