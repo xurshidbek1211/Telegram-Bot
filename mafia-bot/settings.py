@@ -16,6 +16,7 @@ class ChatSettings:
     vote_secs: int = 30
     hang_confirm_enabled: bool = True
     hang_confirm_secs: int = 30
+    custom_role_configs: dict = field(default_factory=dict)
 
 
 _cache: dict[int, ChatSettings] = {}

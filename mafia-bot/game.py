@@ -91,28 +91,40 @@ ROLE_DESCRIPTIONS_UZ = {
 }
 
 MIN_PLAYERS = 4
-MAX_PLAYERS = 25
+MAX_PLAYERS = 30
 
-ROLE_DISTRIBUTION = {
-    4:  [Role.DON, Role.KOMISSAR, Role.DOCTOR, Role.CITIZEN],
-    5:  [Role.DON, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.CITIZEN],
-    6:  [Role.DON, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.CITIZEN],
-    7:  [Role.DON, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.CITIZEN, Role.CITIZEN],
-    8:  [Role.DON, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.CITIZEN, Role.CITIZEN, Role.CITIZEN],
-    9:  [Role.DON, Role.MAFIA, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.DAYDI, Role.CITIZEN, Role.CITIZEN],
-    10: [Role.DON, Role.MAFIA, Role.MAFIA, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.DAYDI, Role.CITIZEN, Role.CITIZEN, Role.CITIZEN],
-    11: [Role.DON, Role.MAFIA, Role.MAFIA, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.TULKI, Role.CITIZEN, Role.CITIZEN],
-    12: [Role.DON, Role.MAFIA, Role.MAFIA, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.TULKI, Role.CITIZEN, Role.CITIZEN],
-    13: [Role.DON, Role.MAFIA, Role.MAFIA, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.TULKI, Role.CITIZEN, Role.CITIZEN],
-    14: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.ADMIRAL, Role.TULKI, Role.KONCHI, Role.CITIZEN],
-    15: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.ADMIRAL, Role.TULKI, Role.KONCHI, Role.CITIZEN],
-    16: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.TULKI, Role.KONCHI, Role.CITIZEN],
-    17: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.BO_RI, Role.TULKI, Role.KONCHI, Role.CITIZEN],
-    18: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.BO_RI, Role.AFSUNGAR, Role.TULKI, Role.KONCHI, Role.CITIZEN],
-    19: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.BO_RI, Role.AFSUNGAR, Role.AFERIST, Role.TULKI, Role.KONCHI, Role.CITIZEN],
-    20: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.BO_RI, Role.AFSUNGAR, Role.AFERIST, Role.DAYDI, Role.SOTQIN, Role.TULKI, Role.KONCHI],
-    21: [Role.DON, Role.MAFIA, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.KEZUVCHI, Role.OMADLI, Role.QOTIL, Role.ADMIRAL, Role.BO_RI, Role.AFSUNGAR, Role.AFERIST, Role.DAYDI, Role.SOTQIN, Role.TULKI, Role.KONCHI, Role.LABARANT],
-}
+# Ordered list of unique roles introduced one-by-one as player count grows.
+# Tinch Aholi (CITIZEN) and Omadli (OMADLI) are intentionally excluded — they
+# are never randomly assigned (per game design). Each role in this list is
+# used at most once per game so that every night-action role stays a
+# singleton (the engine resolves one actor per role); only MAFIA is safe to
+# duplicate, and is used as the overflow filler beyond the unique pool.
+_ROLE_INTRO_ORDER = [
+    Role.DON, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.MAFIA,
+    Role.ADVOKAT, Role.DAYDI, Role.KEZUVCHI, Role.TULKI, Role.JURNALIST,
+    Role.YOLLANMA_QOTIL, Role.ADMIRAL, Role.KONCHI, Role.QOTIL, Role.BO_RI,
+    Role.AFSUNGAR, Role.AFERIST, Role.SOTQIN, Role.LABARANT, Role.SEHRGAR,
+    Role.GAZABKOR, Role.JOKER, Role.KIMYOGAR, Role.MINIOR,
+]
+
+
+def _build_role_distribution() -> dict:
+    dist = {}
+    for n in range(MIN_PLAYERS, MAX_PLAYERS + 1):
+        if n <= len(_ROLE_INTRO_ORDER):
+            dist[n] = _ROLE_INTRO_ORDER[:n]
+        else:
+            extra_mafia = n - len(_ROLE_INTRO_ORDER)
+            dist[n] = _ROLE_INTRO_ORDER + [Role.MAFIA] * extra_mafia
+    return dist
+
+
+ROLE_DISTRIBUTION = _build_role_distribution()
+
+# Safe neutral filler used only when an admin explicitly disables a role
+# (each default distribution has at most one copy of any non-MAFIA role,
+# so this never creates more than one accidental duplicate).
+_DISABLED_ROLE_FILLER = Role.DAYDI
 
 
 def get_role_list(player_count: int, disabled_roles: Optional[set] = None) -> list:
@@ -121,9 +133,30 @@ def get_role_list(player_count: int, disabled_roles: Optional[set] = None) -> li
     else:
         base = max(k for k in ROLE_DISTRIBUTION if k <= player_count)
         roles = ROLE_DISTRIBUTION[base].copy()
-        roles.extend([Role.CITIZEN] * (player_count - base))
+        roles.extend([Role.MAFIA] * (player_count - base))
     if disabled_roles:
-        roles = [Role.CITIZEN if r.name in disabled_roles and r != Role.CITIZEN else r for r in roles]
+        roles = [
+            _DISABLED_ROLE_FILLER if r.name in disabled_roles and r != _DISABLED_ROLE_FILLER else r
+            for r in roles
+        ]
+    random.shuffle(roles)
+    return roles
+
+
+def get_custom_role_list(config: dict, player_count: int) -> Optional[list]:
+    """Build a role list from an admin-defined custom composition for this
+    exact player count. `config` maps role name -> quantity. Returns None if
+    the config does not sum to player_count (caller should fall back to the
+    default distribution)."""
+    roles = []
+    for role_name, qty in config.items():
+        try:
+            role = Role[role_name]
+        except KeyError:
+            continue
+        roles.extend([role] * qty)
+    if len(roles) != player_count:
+        return None
     random.shuffle(roles)
     return roles
 

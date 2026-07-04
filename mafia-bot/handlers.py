@@ -19,6 +19,7 @@ from profiles import get_profile, save_profile, transfer_diamond, transfer_dolla
 from settings import get_settings, save_settings, ChatSettings
 from bot_config import get_promo_channel, set_promo_channel
 from mdutil import escape_md
+from ratings import record_game_result, get_top_ratings
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -71,7 +72,7 @@ def _day_status_block(game: Game) -> str:
     alive = game.alive_players()
     dead = [p for p in game.players.values() if not p.alive]
 
-    alive_list = "\n".join(f"  • {game.get_display_name(p)}" for p in alive) or "  —"
+    alive_list = "\n".join(f"  {i}. {game.get_display_name(p)}" for i, p in enumerate(alive, 1)) or "  —"
 
     role_counts: dict = {}
     for p in game.players.values():
@@ -492,11 +493,11 @@ async def _end_game(bot: Bot, game: Game, winner: str):
     winners = [p for p in game.players.values() if p.role and p.user_id in winner_ids]
     losers = [p for p in game.players.values() if p.role and p.user_id not in winner_ids]
 
-    def _fmt(p):
-        return f"  {'☠️' if not p.alive else '✅'} {p.display_name} — {ROLE_EMOJIS.get(p.role,'')} {ROLE_NAMES_UZ.get(p.role,'')}"
+    def _fmt(i, p):
+        return f"  {i}. {'☠️' if not p.alive else '✅'} {p.display_name} — {ROLE_EMOJIS.get(p.role,'')} {ROLE_NAMES_UZ.get(p.role,'')}"
 
-    winners_list = "\n".join(_fmt(p) for p in winners) or "  —"
-    losers_list = "\n".join(_fmt(p) for p in losers) or "  —"
+    winners_list = "\n".join(_fmt(i, p) for i, p in enumerate(winners, 1)) or "  —"
+    losers_list = "\n".join(_fmt(i, p) for i, p in enumerate(losers, 1)) or "  —"
 
     WIN_REWARD = 30
     win_rewards: dict = {}
@@ -505,6 +506,13 @@ async def _end_game(bot: Bot, game: Game, winner: str):
         reward = WIN_REWARD * 2 if subscribed else WIN_REWARD
         win_rewards[p.user_id] = reward
         record_win(p.user_id, dollar_reward=reward)
+
+    RATING_WIN_POINTS = 10
+    RATING_LOSS_POINTS = 1
+    for p in winners:
+        record_game_result(game.chat_id, p.user_id, p.first_name, won=True, points=RATING_WIN_POINTS)
+    for p in losers:
+        record_game_result(game.chat_id, p.user_id, p.first_name, won=False, points=RATING_LOSS_POINTS)
 
     reward_text = f"\n💵 *G'oliblarga mukofot berildi!*" if winners else ""
 
@@ -800,6 +808,7 @@ async def cmd_start(msg: Message, bot: Bot):
             "/roleshop — Rol do'koni\n"
             "/sozlash — Guruh sozlamalari (admin)\n"
             "/kanal — Reklama kanalini sozlash (bot egasi)\n"
+            "/reyting — Guruh reytingi (TOP 20)\n"
             "/stats — Statistika\n"
             "/rules — Qoidalar\n"
             "/roles — Barcha rollar haqida",
@@ -823,6 +832,15 @@ async def _open_lobby(msg: Message, bot: Bot):
             "⚠️ O'yin allaqachon davom etmoqda!\n"
             "Yangi ro'yxat ochish uchun avval /endgame bilan tugatish kerak."
         )
+
+    if existing and existing.phase == Phase.LOBBY:
+        bot_username = await _get_bot_username(bot)
+        sent = await msg.answer(
+            "📋 Ro'yxatga olish davom etmoqda!\n\n" + _lobby_text(existing),
+            reply_markup=_lobby_kb(chat_id, bot_username),
+        )
+        existing.lobby_msg_id = sent.message_id
+        return
 
     games[chat_id] = Game(chat_id=chat_id)
     game = games[chat_id]
@@ -888,8 +906,8 @@ async def cmd_rules(msg: Message):
 async def cmd_roles(msg: Message):
     teams = {
         "🔴 *Mafiya jamoasi:*": [Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST],
-        "🔵 *Fuqarolar jamoasi:*": [Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.CITIZEN,
-                                    Role.DAYDI, Role.KEZUVCHI, Role.OMADLI, Role.ADMIRAL, Role.SOTQIN,
+        "🔵 *Fuqarolar jamoasi:*": [Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT,
+                                    Role.DAYDI, Role.KEZUVCHI, Role.ADMIRAL, Role.SOTQIN,
                                     Role.KONCHI],
         "⚪ *Mustaqil rollar:*": [Role.QOTIL, Role.BO_RI, Role.AFSUNGAR, Role.AFERIST,
                                   Role.SEHRGAR, Role.GAZABKOR, Role.JOKER, Role.KIMYOGAR, Role.MINIOR,
@@ -929,10 +947,10 @@ async def cmd_players(msg: Message):
         text += f"{i}. {p.display_name}\n"
     if dead:
         text += f"\n*Chiqarilgan ({len(dead)}):*\n"
-        for p in dead:
+        for i, p in enumerate(dead, 1):
             rn = ROLE_NAMES_UZ.get(p.role, "") if p.role else ""
             em = ROLE_EMOJIS.get(p.role, "") if p.role else ""
-            text += f"☠️ {p.display_name} — {em} {rn}\n"
+            text += f"{i}. ☠️ {p.display_name} — {em} {rn}\n"
 
     await msg.answer(text)
 
@@ -967,10 +985,22 @@ async def cmd_leave(msg: Message):
 
 
 TOGGLEABLE_ROLES = [
-    r for r in Role if r not in (Role.CITIZEN, Role.DON, Role.MAFIA)
+    r for r in Role if r not in (Role.CITIZEN, Role.OMADLI, Role.DON, Role.MAFIA)
 ]
 
 DURATION_OPTIONS = [15, 30, 45, 60, 90]
+
+# Role composition editor: DON is always exactly 1 (mandatory), MAFIA supports
+# a numeric quantity (the only role the night engine can safely duplicate),
+# every other role is a simple on/off toggle for that player count.
+RCFG_MIN_COUNT = 4
+RCFG_MAX_COUNT = 30
+RCFG_TOGGLE_ROLES = [
+    r for r in Role if r not in (Role.CITIZEN, Role.OMADLI, Role.DON, Role.MAFIA)
+]
+
+# Transient in-memory editing sessions, keyed by admin user_id (editing happens in DM).
+_rcfg_sessions: dict[int, dict] = {}
 
 
 def _sozlash_main_kb(chat_id: int, settings: ChatSettings) -> InlineKeyboardMarkup:
@@ -978,11 +1008,86 @@ def _sozlash_main_kb(chat_id: int, settings: ChatSettings) -> InlineKeyboardMark
     protect_label = "✅ Himoya buyumlari yoqilgan" if settings.protection_enabled else "❌ Himoya buyumlari o'chirilgan"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🃏 Rollarni yoqish/o'chirish", callback_data=f"soz:roles:0:{chat_id}")],
+        [InlineKeyboardButton(text="🎭 Rollarni sozlash (o'yinchilar soni bo'yicha)", callback_data=f"soz:rcfgc:0:{chat_id}")],
         [InlineKeyboardButton(text=leave_label, callback_data=f"soz:toggle_leave:{chat_id}")],
         [InlineKeyboardButton(text=protect_label, callback_data=f"soz:toggle_protect:{chat_id}")],
         [InlineKeyboardButton(text="⏳ Vaqtlarni sozlash", callback_data=f"soz:durations:{chat_id}")],
         [InlineKeyboardButton(text="✅ Yopish", callback_data=f"soz:close:{chat_id}")],
     ])
+
+
+def _rcfg_counts_kb(chat_id: int, settings: ChatSettings, page: int = 0) -> InlineKeyboardMarkup:
+    per_page = 10
+    counts = list(range(RCFG_MIN_COUNT, RCFG_MAX_COUNT + 1))
+    start = page * per_page
+    page_counts = counts[start:start + per_page]
+    rows = []
+    row = []
+    for n in page_counts:
+        mark = "⭐" if str(n) in settings.custom_role_configs else ""
+        row.append(InlineKeyboardButton(text=f"{mark}{n}", callback_data=f"soz:rcfgo:{n}:{page}:{chat_id}"))
+        if len(row) == 5:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    nav = []
+    if start > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"soz:rcfgc:{page-1}:{chat_id}"))
+    if start + per_page < len(counts):
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"soz:rcfgc:{page+1}:{chat_id}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data=f"soz:main:{chat_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _rcfg_session_total(session: dict) -> int:
+    return 1 + (1 + session["mafia_extra"]) + len(session["roles"])
+
+
+def _rcfg_editor_kb(chat_id: int, session: dict, page: int = 0) -> InlineKeyboardMarkup:
+    per_page = 6
+    start = page * per_page
+    roles_page = RCFG_TOGGLE_ROLES[start:start + per_page]
+    rows = [[
+        InlineKeyboardButton(text="➖", callback_data=f"soz:rcfgm:dec:{page}:{chat_id}"),
+        InlineKeyboardButton(text=f"{ROLE_EMOJIS[Role.MAFIA]} Mafiya: {1 + session['mafia_extra']}", callback_data="noop"),
+        InlineKeyboardButton(text="➕", callback_data=f"soz:rcfgm:inc:{page}:{chat_id}"),
+    ]]
+    for r in roles_page:
+        on = r.name in session["roles"]
+        label = f"{'✅' if on else '❌'} {ROLE_EMOJIS.get(r,'')} {ROLE_NAMES_UZ.get(r, r.value)}"
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"soz:rcfgr:{r.name}:{page}:{chat_id}")])
+    nav = []
+    if start > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"soz:rcfge:{page-1}:{chat_id}"))
+    if start + per_page < len(RCFG_TOGGLE_ROLES):
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"soz:rcfge:{page+1}:{chat_id}"))
+    if nav:
+        rows.append(nav)
+    total = _rcfg_session_total(session)
+    target = session["count"]
+    status = "✅" if total == target else "⚠️"
+    rows.append([InlineKeyboardButton(text=f"{status} Jami: {total}/{target}", callback_data="noop")])
+    save_row = []
+    if total == target:
+        save_row.append(InlineKeyboardButton(text="💾 Saqlash", callback_data=f"soz:rcfgs:{page}:{chat_id}"))
+    save_row.append(InlineKeyboardButton(text="🗑️ Standartga qaytarish", callback_data=f"soz:rcfgd:{page}:{chat_id}"))
+    rows.append(save_row)
+    rows.append([InlineKeyboardButton(text="🔙 Orqaga", callback_data=f"soz:rcfgc:0:{chat_id}")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _rcfg_editor_text(session: dict) -> str:
+    total = _rcfg_session_total(session)
+    target = session["count"]
+    return (
+        f"🎭 *Rollarni sozlash — {target} o'yinchi*\n\n"
+        f"Har bir rolni yoqing/o'chiring. Mafiya sonini +/- bilan o'zgartiring.\n"
+        f"Jami tanlangan rollar soni o'yinchilar soniga teng bo'lishi kerak.\n\n"
+        f"Hozirgi holat: *{total}/{target}*"
+    )
 
 
 def _sozlash_roles_kb(chat_id: int, settings: ChatSettings, page: int = 0) -> InlineKeyboardMarkup:
@@ -1040,10 +1145,18 @@ async def cmd_sozlash(msg: Message, bot: Bot):
         return await msg.answer("⚠️ Faqat adminlar sozlashlarni o'zgartira oladi.")
 
     settings = get_settings(chat_id)
-    await msg.answer(
-        "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
-        reply_markup=_sozlash_main_kb(chat_id, settings),
-    )
+    try:
+        await bot.send_message(
+            msg.from_user.id,
+            "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
+            reply_markup=_sozlash_main_kb(chat_id, settings),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        return await msg.answer(
+            "⚠️ Sizga shaxsiy xabar yubora olmadim. Avval botga shaxsiy chatda /start yozing, so'ng qayta urinib ko'ring."
+        )
+    await msg.answer("✅ Sozlash menyusi shaxsiy chattingizga yuborildi.")
 
 
 @router.callback_query(F.data.startswith("soz:"))
@@ -1116,6 +1229,88 @@ async def cb_sozlash(call: CallbackQuery):
             reply_markup=_sozlash_durations_kb(chat_id, settings),
         )
 
+    elif action == "rcfgc":
+        page = int(parts[2])
+        await call.message.edit_text(
+            "🎭 *Rollarni sozlash*\n\n"
+            "O'yinchilar sonini tanlang (⭐ = moslashtirilgan sozlama mavjud):",
+            reply_markup=_rcfg_counts_kb(chat_id, settings, page),
+        )
+
+    elif action == "rcfgo":
+        count, page = int(parts[2]), int(parts[3])
+        existing = settings.custom_role_configs.get(str(count))
+        if existing:
+            roles = {name for name, qty in existing.items() if name not in ("DON", "MAFIA") and qty}
+            mafia_extra = max(0, existing.get("MAFIA", 1) - 1)
+        else:
+            roles = set()
+            mafia_extra = 0
+        session = {"chat_id": chat_id, "count": count, "roles": roles, "mafia_extra": mafia_extra}
+        _rcfg_sessions[call.from_user.id] = session
+        await call.message.edit_text(_rcfg_editor_text(session), reply_markup=_rcfg_editor_kb(chat_id, session, 0))
+
+    elif action == "rcfge":
+        page = int(parts[2])
+        session = _rcfg_sessions.get(call.from_user.id)
+        if not session or session["chat_id"] != chat_id:
+            return await call.answer("⚠️ Sessiya topilmadi, qaytadan boshlang.", show_alert=True)
+        await call.message.edit_text(_rcfg_editor_text(session), reply_markup=_rcfg_editor_kb(chat_id, session, page))
+
+    elif action == "rcfgm":
+        direction, page = parts[2], int(parts[3])
+        session = _rcfg_sessions.get(call.from_user.id)
+        if not session or session["chat_id"] != chat_id:
+            return await call.answer("⚠️ Sessiya topilmadi, qaytadan boshlang.", show_alert=True)
+        if direction == "inc" and _rcfg_session_total(session) < session["count"]:
+            session["mafia_extra"] += 1
+        elif direction == "dec" and session["mafia_extra"] > 0:
+            session["mafia_extra"] -= 1
+        await call.message.edit_text(_rcfg_editor_text(session), reply_markup=_rcfg_editor_kb(chat_id, session, page))
+
+    elif action == "rcfgr":
+        role_name, page = parts[2], int(parts[3])
+        session = _rcfg_sessions.get(call.from_user.id)
+        if not session or session["chat_id"] != chat_id:
+            return await call.answer("⚠️ Sessiya topilmadi, qaytadan boshlang.", show_alert=True)
+        if role_name in session["roles"]:
+            session["roles"].discard(role_name)
+        elif _rcfg_session_total(session) < session["count"]:
+            session["roles"].add(role_name)
+        else:
+            return await call.answer("⚠️ Jami rollar soni o'yinchilar sonidan oshib ketdi.", show_alert=True)
+        await call.message.edit_text(_rcfg_editor_text(session), reply_markup=_rcfg_editor_kb(chat_id, session, page))
+
+    elif action == "rcfgs":
+        session = _rcfg_sessions.get(call.from_user.id)
+        if not session or session["chat_id"] != chat_id:
+            return await call.answer("⚠️ Sessiya topilmadi, qaytadan boshlang.", show_alert=True)
+        if _rcfg_session_total(session) != session["count"]:
+            return await call.answer("⚠️ Jami rollar soni mos kelmayapti.", show_alert=True)
+        config = {"DON": 1, "MAFIA": 1 + session["mafia_extra"]}
+        for role_name in session["roles"]:
+            config[role_name] = 1
+        settings.custom_role_configs[str(session["count"])] = config
+        save_settings(settings)
+        del _rcfg_sessions[call.from_user.id]
+        await call.message.edit_text(
+            f"✅ *{session['count']} o'yinchi uchun sozlama saqlandi!*",
+            reply_markup=_rcfg_counts_kb(chat_id, settings, 0),
+        )
+
+    elif action == "rcfgd":
+        session = _rcfg_sessions.get(call.from_user.id)
+        if not session or session["chat_id"] != chat_id:
+            return await call.answer("⚠️ Sessiya topilmadi, qaytadan boshlang.", show_alert=True)
+        settings.custom_role_configs.pop(str(session["count"]), None)
+        save_settings(settings)
+        del _rcfg_sessions[call.from_user.id]
+        await call.message.edit_text(
+            "🎭 *Rollarni sozlash*\n\n"
+            "O'yinchilar sonini tanlang (⭐ = moslashtirilgan sozlama mavjud):",
+            reply_markup=_rcfg_counts_kb(chat_id, settings, 0),
+        )
+
     await call.answer()
 
 
@@ -1124,12 +1319,18 @@ async def cb_noop(call: CallbackQuery):
     await call.answer()
 
 
-def _assign_roles_with_preferences(game: Game, disabled_roles: list = None):
+def _assign_roles_with_preferences(game: Game, disabled_roles: list = None, custom_role_configs: dict = None):
     """Assign roles, honoring active_role preferences from player profiles."""
     import random
-    from game import get_role_list
+    from game import get_role_list, get_custom_role_list
     players = list(game.players.values())
-    role_pool = get_role_list(len(players), disabled_roles=disabled_roles)
+    role_pool = None
+    if custom_role_configs:
+        config = custom_role_configs.get(str(len(players)))
+        if config:
+            role_pool = get_custom_role_list(config, len(players))
+    if role_pool is None:
+        role_pool = get_role_list(len(players), disabled_roles=disabled_roles)
 
     assigned: dict[int, Role] = {}
     remaining = list(role_pool)
@@ -1179,22 +1380,21 @@ async def _launch_game(msg: Message, bot: Bot):
 
     game.group_link = await _group_link(bot, chat_id)
 
-    disabled_roles = get_settings(chat_id).disabled_roles
-    _assign_roles_with_preferences(game, disabled_roles=disabled_roles)
+    chat_settings = get_settings(chat_id)
+    _assign_roles_with_preferences(
+        game,
+        disabled_roles=chat_settings.disabled_roles,
+        custom_role_configs=chat_settings.custom_role_configs,
+    )
     game.day_number = 1
 
     for player in game.players.values():
         record_game_start(player.user_id, player.first_name)
 
-    counts: dict = {}
-    for p in game.players.values():
-        counts[p.role] = counts.get(p.role, 0) + 1
-    dist = "  ".join(f"{ROLE_EMOJIS[r]} {ROLE_NAMES_UZ[r]}: {n}" for r, n in counts.items())
-
     await msg.answer(
         f"🟢 *O'YIN BOSHLANDI!*\n\n"
-        f"*{len(game.players)} o'yinchi* rollarini oldi.\n{dist}\n\n"
-        "🎭 Shaxsiy xabaringizni tekshiring!\n"
+        f"🎭 Rollar taqsimlanmoqda...\n\n"
+        "Shaxsiy xabaringizni tekshiring!\n"
         "⚠️ Agar DM kelmasa — botga /start yozing!",
     )
 
@@ -1244,6 +1444,27 @@ async def cmd_endgame(msg: Message, bot: Bot):
         for p in game.players.values() if p.role
     )
     await msg.answer(f"🛑 *O'yin admin tomonidan tugatildi.*\n\n*Rollar:*\n{role_list}")
+
+
+@router.message(Command("reyting"))
+async def cmd_reyting(msg: Message):
+    if msg.chat.type == "private":
+        return await msg.answer("⚠️ Bu buyruq faqat guruh chatlarda ishlaydi.")
+
+    top = get_top_ratings(msg.chat.id)
+    if not top:
+        return await msg.answer("📊 Bu guruhda hali reyting yo'q. O'yin o'ynang!")
+
+    lines = ["🏆 *Guruh reytingi — TOP 20*\n"]
+    medals = {1: "🥇", 2: "🥈", 3: "🥉"}
+    for i, entry in enumerate(top, 1):
+        medal = medals.get(i, f"{i}.")
+        display_name = entry.first_name or "Noma'lum"
+        lines.append(
+            f"{medal} {escape_md(display_name)} — "
+            f"*{entry.score}* ball ({entry.wins} g'alaba / {entry.games} o'yin)"
+        )
+    await msg.answer("\n".join(lines))
 
 
 @router.message(Command("stats"))
@@ -1562,7 +1783,6 @@ PURCHASABLE_ROLES = {
     "bori":      (Role.BO_RI,     "🐺",  "Bo'ri",         1),
     "kimyogar":  (Role.KIMYOGAR,  "👨‍🔬", "Kimyogar",      1),
     "afsungar":  (Role.AFSUNGAR,  "💣",  "Afsungar",      1),
-    "omadli":    (Role.OMADLI,    "🤞🏼", "Omadli",        1),
 }
 
 ROLE_KEY_ALIASES = {

@@ -1,0 +1,77 @@
+Quyidagi toʻliq promptni Replit AI'ga yuboring:
+
+> Mavjud Mafia botning barcha ishlayotgan funksiyalarini saqlab qolgan holda, quyidagi o'zgarishlarni kiriting. Hech bir mavjud funksiya buzilmasin, faqat quyidagi imkoniyatlar qo'shilsin:
+
+1. Tinch Aholi (Villager) roli o'yindan butunlay olib tashlansin.
+
+2. Omadli (Lucky) roli ham o'yindan olib tashlansin va hech qachon tasodifiy taqsimlanmasin.
+
+3. Rol taqsimlash boshlanganda guruh chatida faqat "🎭 Rollar taqsimlanmoqda..." degan xabar chiqsin. Kimga qaysi rol tushgani guruhda ko'rinmasin. Har bir o'yinchi o'z rolini faqat bot bilan shaxsiy chat orqali olsin.
+
+4. /sozlash buyrug'i faqat administratorlar uchun ishlasin.
+
+5. Administrator guruhda /sozlash yozganda sozlash menyusi guruh chatida ochilmasin. Sozlash menyusi avtomatik ravishda buyruqni yozgan administratorning bot bilan shaxsiy chatiga yuborilsin.
+
+6. Guruh chatida faqat "✅ Sozlash menyusi shaxsiy chattingizga yuborildi." degan xabar chiqsin.
+
+7. /game buyrug'i ketma-ket yoki qayta bosilganda, agar registratsiya allaqachon davom etayotgan bo'lsa, yangi registratsiya yoki yangi o'yin boshlanmasin. Mavjud registratsiya saqlanib qolsin. Bot registratsiya jadvalini qayta yuborsin (yoki yangilasin) va guruhga "📋 Ro'yxatga olish davom etmoqda!" degan xabar chiqarsin. Ro'yxatdagi o'yinchilar o'chib ketmasin va registratsiya odatdagidek davom etsin.
+
+8. Barcha o'yinchilar ro'yxatlari tartib raqami bilan ko'rsatilsin. Bu faqat registratsiya vaqtida emas, balki o'yin davomida chiqadigan barcha ro'yxatlarda ham amal qilsin. Jumladan:
+
+Registratsiya jadvali.
+
+O'yin boshlangandagi o'yinchilar ro'yxati.
+
+O'yin davomida chiqadigan barcha ro'yxatlar.
+
+O'yin tugagandan keyingi yakuniy natijalar jadvali.
+
+
+Har bir ro'yxatda o'yinchilar 1., 2., 3., 4... tarzida tartib raqami bilan ko'rsatilsin. O'yinchilar qo'shilganda yoki chiqib ketganda tartib raqamlari avtomatik yangilanib borsin.
+
+9. /reyting buyrug'i qo'shilsin. Bu buyruq guruhdagi eng yaxshi TOP 20 o'yinchini ko'rsatsin. Reyting barcha o'yinlar natijalariga qarab hisoblanib borsin. Har bir o'yinchi uchun:
+
+Tartib raqami.
+
+Ismi.
+
+Reyting bali.
+
+G'alabalar soni.
+
+
+Reyting har bir o'yindan keyin avtomatik yangilansin. Ma'lumotlar bazasida doimiy saqlansin va bot qayta ishga tushirilganda ham o'chib ketmasin. Har bir guruhning reytingi alohida yuritilsin.
+
+10. /sozlash menyusiga "🎭 Rollarni sozlash" bo'limi qo'shilsin.
+
+Administrator shaxsiy chatdagi sozlash menyusi orqali 4 kishidan 30 kishigacha bo'lgan har bir o'yinchi soni uchun alohida rol tarkibini sozlay olsin.
+
+Masalan:
+
+4 kishi uchun qaysi rollar ishlatiladi.
+
+5 kishi uchun qaysi rollar ishlatiladi.
+
+6 kishi uchun qaysi rollar ishlatiladi.
+
+...
+
+30 kishi uchun qaysi rollar ishlatiladi.
+
+
+Har bir o'yinchi soni uchun administrator:
+
+Rol qo'sha olsin.
+
+Rolni olib tashlay olsin.
+
+Rolni boshqa rol bilan almashtira olsin.
+
+Bir rol nechta bo'lishini belgilay olsin (masalan, 2 ta Mafiya, 3 ta Doktor va hokazo).
+
+
+11. Rollarni sozlash menyusi qulay tugmalar (Inline Keyboard) orqali ishlasin. Har bir o'yinchi soni alohida menyu bilan ochilsin. Barcha o'zgarishlarni "💾 Saqlash" tugmasi orqali saqlash mumkin bo'lsin.
+
+12. Administrator tomonidan saqlangan rol konfiguratsiyasi ma'lumotlar bazasida doimiy saqlansin. Bot qayta ishga tushirilganda ham o'chib ketmasin. O'yin boshlanganda rollar aynan administrator belgilagan konfiguratsiya bo'yicha taqsimlansin.
+
+13. Yuqoridagi barcha o'zgarishlar mavjud kodni buzmasdan qo'shilsin. Hech bir ishlayotgan buyruq yoki funksiya ishdan chiqmasin. Mavjud tizim to'liq saqlansin va faqat so'ralgan funksiyalar qo'shilsin.
