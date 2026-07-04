@@ -66,11 +66,12 @@ async def main():
         BotCommand(command="kick", description="👢 O'yinchini chiqarish"),
         BotCommand(command="roles", description="🎭 Rollar ro'yxati"),
         BotCommand(command="profile", description="👤 Profilni ko'rish"),
-        BotCommand(command="give", description="💎 Olmos berish"),
-        BotCommand(command="money", description="💵 Pul berish"),
+        BotCommand(command="give", description="💎 Olmos tashlash (guruhda)"),
+        BotCommand(command="money", description="💵 Pul tashlash (guruhda)"),
         BotCommand(command="shop", description="🛒 Do'kon"),
         BotCommand(command="stats", description="📊 Statistika"),
         BotCommand(command="settings", description="⚙️ Sozlamalar"),
+        BotCommand(command="kanal", description="📢 Reklama kanalini sozlash (egasi)"),
         BotCommand(command="help", description="❓ Yordam"),
     ])
 

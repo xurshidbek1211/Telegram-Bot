@@ -162,6 +162,9 @@ class Game:
     komissar_found_mafia: Optional[str] = None
     phase_task: Any = None
     group_link: Optional[str] = None
+    vote_msg_id: Optional[int] = None
+    give_drops: dict = field(default_factory=dict)
+    money_drops: dict = field(default_factory=dict)
 
     def add_player(self, user_id: int, username: str, first_name: str) -> bool:
         if user_id in self.players or len(self.players) >= MAX_PLAYERS:

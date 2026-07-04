@@ -15,8 +15,9 @@ from game import (
 )
 from stats import load_stats, save_stats
 from night import resolve_night
-from profiles import get_profile, save_profile, transfer_diamond, transfer_dollar, record_game_start, record_win, add_dollar, add_diamond
+from profiles import get_profile, save_profile, transfer_diamond, transfer_dollar, record_game_start, record_win, add_dollar, add_diamond, OWNER_ID
 from settings import get_settings, save_settings, ChatSettings
+from bot_config import get_promo_channel, set_promo_channel
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -92,6 +93,14 @@ async def _group_link(bot: Bot, chat_id: int) -> Optional[str]:
         return None
 
 
+def _dm_entry_kb(bot_username: Optional[str], text: str, chat_id: int, payload: str) -> Optional[InlineKeyboardMarkup]:
+    if not bot_username:
+        return None
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=text, url=f"https://t.me/{bot_username}?start={payload}_{chat_id}")
+    ]])
+
+
 def _lobby_kb(chat_id: int, bot_username: Optional[str] = None) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="🎮 Qo'shilish",   callback_data=f"join:{chat_id}")],
@@ -137,9 +146,7 @@ def _vote_kb(game: Game, voter_id: int) -> InlineKeyboardMarkup:
         if p.user_id == voter_id:
             continue
         label = game.get_display_name(p)
-        if game.votes.get(voter_id) == p.user_id:
-            label = f"✅ {label}"
-        rows.append([InlineKeyboardButton(text=label, callback_data=f"vote:{p.user_id}")])
+        rows.append([InlineKeyboardButton(text=label, callback_data=f"dvote:{p.user_id}:{game.chat_id}")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -166,12 +173,14 @@ async def run_night(bot: Bot, chat_id: int):
     game.phase = Phase.NIGHT
     _auto_passive(game)
 
+    bot_username = await _get_bot_username(bot)
     await bot.send_message(
         chat_id,
         f"🌙 *{game.day_number}-KECHA BOSHLANDI!*\n"
         f"⏳ Vaqt: *{settings.night_secs} soniya*\n\n"
         "Har bir o'yinchi shaxsiy xabarda harakat tanlashini kutmoqda...\n"
         "⚠️ Agar DM kelmasa — botga /start yozing!",
+        reply_markup=_dm_entry_kb(bot_username, "🤖 Botga o'tish", chat_id, "group"),
     )
 
     await _send_night_actions(bot, game)
@@ -244,14 +253,29 @@ async def run_vote(bot: Bot, chat_id: int):
     game.phase = Phase.VOTING
     game.votes = {}
 
-    await bot.send_message(
+    alive = game.alive_players()
+    bot_username = await _get_bot_username(bot)
+
+    msg = await bot.send_message(
         chat_id,
         f"🗳️ *OVOZ BERISH BOSHLANDI!*\n"
         f"⏳ Vaqt: *{settings.vote_secs} soniya*\n\n"
-        "Kim Mafiya? Quyidagi tugmalardan birini bosing!\n"
-        "Bir marta bosing = ovoz. Qayta bosing = bekor.",
-        reply_markup=_group_vote_kb(game),
+        "Kim Mafiya ekanini shaxsiy xabarda (bot bilan) tanlang!\n"
+        "⚠️ Ovoz berilgach uni bekor qilib bo'lmaydi.\n\n"
+        f"0/{len(alive)} ovoz berdi.",
+        reply_markup=_dm_entry_kb(bot_username, "🗳️ Ovoz berish (DM)", chat_id, "vote"),
     )
+    game.vote_msg_id = msg.message_id
+
+    for p in alive:
+        try:
+            await bot.send_message(
+                p.user_id,
+                "🗳️ *Ovoz berish vaqti!*\n\nKim Mafiya ekanini o'ylab, tanlang:",
+                reply_markup=_vote_kb(game, p.user_id),
+            )
+        except Exception:
+            pass
 
     await asyncio.sleep(settings.vote_secs)
     await _do_vote_resolution(bot, game)
@@ -424,10 +448,14 @@ async def _end_game(bot: Bot, game: Game, winner: str):
     losers_list = "\n".join(_fmt(p) for p in losers) or "  —"
 
     WIN_REWARD = 30
+    win_rewards: dict = {}
     for p in winners:
-        record_win(p.user_id, dollar_reward=WIN_REWARD)
+        subscribed = await _is_subscribed_to_promo_channel(bot, p.user_id)
+        reward = WIN_REWARD * 2 if subscribed else WIN_REWARD
+        win_rewards[p.user_id] = reward
+        record_win(p.user_id, dollar_reward=reward)
 
-    reward_text = f"\n💵 *G'oliblarga +{WIN_REWARD}$ berildi!*" if winners else ""
+    reward_text = f"\n💵 *G'oliblarga mukofot berildi!*" if winners else ""
 
     newgame_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎮 Yangi o'yin boshlash", callback_data=f"newgame_btn:{game.chat_id}")]
@@ -442,12 +470,14 @@ async def _end_game(bot: Bot, game: Game, winner: str):
     )
 
     for p in winners:
+        reward = win_rewards.get(p.user_id, WIN_REWARD)
+        bonus_note = " (2x kanal bonusi bilan!)" if reward > WIN_REWARD else ""
         await _dm(bot, p.user_id,
-            f"🎉 *Tabriklaymiz!* Siz g'alaba qozondingiz va *{WIN_REWARD}$* yutdingiz!\n\n"
+            f"🎉 Siz {reward}$ yutdingiz!{bonus_note}\n\n"
             + _profile_text(p.user_id, p.first_name))
     for p in losers:
         await _dm(bot, p.user_id,
-            "😔 *Siz yutqazdingiz.*\n\n" + _profile_text(p.user_id, p.first_name))
+            "😔 Siz yutqazdingiz.\n\n" + _profile_text(p.user_id, p.first_name))
 
     stats = load_stats()
     stats.total_games += 1
@@ -707,10 +737,12 @@ async def cmd_start(msg: Message, bot: Bot):
             "/endgame — O'yinni tugatish (admin)\n"
             "/players — O'yinchilar ro'yxati\n"
             "/profile — Profilingiz\n"
-            "/money — Pul o'tkazish (reply bilan)\n"
+            "/give N — Guruhga N olmos tashlash (har kim 1 tadan oladi)\n"
+            "/money N — Guruhga N$ tashlash (har kim ulush oladi)\n"
             "/shop — Do'kon\n"
             "/roleshop — Rol do'koni\n"
             "/sozlash — Guruh sozlamalari (admin)\n"
+            "/kanal — Reklama kanalini sozlash (bot egasi)\n"
             "/stats — Statistika\n"
             "/rules — Qoidalar\n"
             "/roles — Barcha rollar haqida",
@@ -1151,6 +1183,43 @@ async def cmd_stats(msg: Message):
     )
 
 
+async def _is_subscribed_to_promo_channel(bot: Bot, user_id: int) -> bool:
+    channel = get_promo_channel()
+    if not channel:
+        return False
+    try:
+        member = await bot.get_chat_member(channel, user_id)
+        return member.status in ("member", "administrator", "creator")
+    except Exception:
+        return False
+
+
+def _promo_text() -> str:
+    channel = get_promo_channel()
+    if not channel:
+        return ""
+    link = channel if channel.startswith("http") or channel.startswith("@") else f"@{channel}"
+    return f"\n\n📢 *{link}* kanaliga a'zo bo'ling va mukofotlaringiz *2x* bo'lsin!"
+
+
+@router.message(Command("kanal"))
+async def cmd_kanal(msg: Message):
+    if msg.from_user.id != OWNER_ID:
+        return await msg.answer("⚠️ Bu buyruqni faqat bot egasi ishlatishi mumkin.")
+
+    parts = msg.text.split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        current = get_promo_channel()
+        return await msg.answer(
+            f"📢 Hozirgi reklama kanali: *{current or 'o‘rnatilmagan'}*\n\n"
+            "O'rnatish uchun: `/kanal @username` yoki `/kanal https://t.me/...`"
+        )
+
+    channel = parts[1].strip()
+    set_promo_channel(channel)
+    await msg.answer(f"✅ Reklama kanali o'rnatildi: *{channel}*")
+
+
 def _profile_text(user_id: int, first_name: str) -> str:
     p = get_profile(user_id, first_name)
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
@@ -1181,7 +1250,7 @@ def _profile_text(user_id: int, first_name: str) -> str:
         f"📈 G'alaba foizi: *{win_rate}*\n\n"
         f"🎒 *Inventar:*\n{items_str}\n\n"
         f"🃏 Faol rollar: {roles_str}"
-    )
+    ) + _promo_text()
 
 
 @router.message(Command("profile"))
@@ -1192,70 +1261,132 @@ async def cmd_profile(msg: Message):
 
 @router.message(Command("give"))
 async def cmd_give(msg: Message):
-    if not msg.reply_to_message:
-        return await msg.answer("❌ Kimga berishni ko'rsating — xabariga reply qiling.")
+    if msg.chat.type == "private":
+        return await msg.answer("⚠️ Bu buyruq faqat guruhda ishlaydi.")
 
     giver = msg.from_user
-    target_user = msg.reply_to_message.from_user
-    if target_user.is_bot:
-        return await msg.answer("❌ Botga olmos berish mumkin emas.")
-    if giver.id == target_user.id:
-        return await msg.answer("❌ O'zingizga bera olmaysiz.")
-
     parts = msg.text.split()
     if len(parts) < 2 or not parts[1].isdigit():
-        return await msg.answer("❌ Miqdor kiriting. Masalan: `/give 50` (reply bilan)")
+        return await msg.answer("❌ Miqdor kiriting. Masalan: `/give 10`")
 
     amount = int(parts[1])
     if amount <= 0:
         return await msg.answer("❌ Miqdor musbat son bo'lishi kerak.")
 
-    get_profile(target_user.id, target_user.first_name)
-    ok = transfer_diamond(giver.id, target_user.id, amount)
-    if not ok:
-        giver_p = get_profile(giver.id)
-        return await msg.answer(
-            f"❌ Yetarli olmos yo'q. Sizda: *{giver_p.diamond}* 💎"
-        )
+    giver_p = get_profile(giver.id, giver.first_name)
+    if not giver_p.infinite_diamond and giver_p.diamond < amount:
+        return await msg.answer(f"❌ Yetarli olmos yo'q. Sizda: *{giver_p.diamond}* 💎")
+
+    if not giver_p.infinite_diamond:
+        giver_p.diamond -= amount
+        save_profile(giver_p)
+
+    game = games.get(msg.chat.id)
+    if game is None:
+        game = Game(chat_id=msg.chat.id)
+        games[msg.chat.id] = game
+    drop_id = f"{msg.message_id}"
+    game.give_drops[drop_id] = {"remaining": amount, "claimed": set(), "giver": giver.id}
 
     await msg.answer(
-        f"💎 *{giver.first_name}* → *{target_user.first_name}*\n"
-        f"*{amount}* olmos o'tkazildi!"
+        f"💎 *{giver.first_name}* *{amount}* olmos tashladi!\n\n"
+        f"Har bir o'yinchi faqat *1 marta* bosib, *1 olmos* olishi mumkin.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="💎 Olish", callback_data=f"claimdiamond:{drop_id}:{msg.chat.id}")
+        ]]),
     )
+
+
+@router.callback_query(F.data.startswith("claimdiamond:"))
+async def cb_claim_diamond(call: CallbackQuery):
+    _, drop_id, cid = call.data.split(":")
+    cid = int(cid)
+    game = games.get(cid)
+    if not game or drop_id not in game.give_drops:
+        return await call.answer("⚠️ Bu tashlama endi faol emas.", show_alert=True)
+
+    drop = game.give_drops[drop_id]
+    user = call.from_user
+    if user.id == drop["giver"]:
+        return await call.answer("❌ O'zingiz tashlagan narsani ololmaysiz.", show_alert=True)
+    if user.id in drop["claimed"]:
+        return await call.answer("⚠️ Siz allaqachon oldingiz!", show_alert=True)
+    if drop["remaining"] <= 0:
+        return await call.answer("⚠️ Olmoslar tugadi.", show_alert=True)
+
+    drop["claimed"].add(user.id)
+    drop["remaining"] -= 1
+    get_profile(user.id, user.first_name)
+    add_diamond(user.id, 1)
+    await call.answer("✅ Siz 1 olmos oldingiz!", show_alert=True)
+
+    if drop["remaining"] <= 0:
+        try:
+            await call.message.edit_text(f"💎 Olmoslar tugadi! Barchasi tarqatildi.")
+        except Exception:
+            pass
+        del game.give_drops[drop_id]
 
 
 @router.message(Command("money"))
 async def cmd_money(msg: Message):
-    if not msg.reply_to_message:
-        return await msg.answer("❌ Kimga pul berishni ko'rsating — xabariga reply qiling.")
+    if msg.chat.type == "private":
+        return await msg.answer("⚠️ Bu buyruq faqat guruhda ishlaydi.")
 
     giver = msg.from_user
-    target_user = msg.reply_to_message.from_user
-    if target_user.is_bot:
-        return await msg.answer("❌ Botga pul berish mumkin emas.")
-    if giver.id == target_user.id:
-        return await msg.answer("❌ O'zingizga bera olmaysiz.")
-
     parts = msg.text.split()
     if len(parts) < 2 or not parts[1].isdigit():
-        return await msg.answer("❌ Miqdor kiriting. Masalan: `/money 50` (reply bilan)")
+        return await msg.answer("❌ Miqdor kiriting. Masalan: `/money 50`")
 
     amount = int(parts[1])
     if amount <= 0:
         return await msg.answer("❌ Miqdor musbat son bo'lishi kerak.")
 
-    get_profile(target_user.id, target_user.first_name)
-    ok = transfer_dollar(giver.id, target_user.id, amount)
-    if not ok:
-        giver_p = get_profile(giver.id)
-        return await msg.answer(
-            f"❌ Yetarli pul yo'q. Sizda: *{giver_p.dollar}$*"
-        )
+    giver_p = get_profile(giver.id, giver.first_name)
+    if not giver_p.infinite_dollar and giver_p.dollar < amount:
+        return await msg.answer(f"❌ Yetarli pul yo'q. Sizda: *{giver_p.dollar}$*")
+
+    if not giver_p.infinite_dollar:
+        giver_p.dollar -= amount
+        save_profile(giver_p)
+
+    per_claim = 10 if amount <= 100 else 100
+
+    game = games.get(msg.chat.id)
+    if game is None:
+        game = Game(chat_id=msg.chat.id)
+        games[msg.chat.id] = game
+    drop_id = f"{msg.message_id}"
+    game.money_drops[drop_id] = {"per_claim": per_claim, "claimed": set(), "giver": giver.id, "pool": amount}
 
     await msg.answer(
-        f"💵 *{giver.first_name}* → *{target_user.first_name}*\n"
-        f"*{amount}$* o'tkazildi!"
+        f"💵 *{giver.first_name}* *{amount}$* tashladi!\n\n"
+        f"Har bir o'yinchi bosib *{per_claim}$* olishi mumkin (faqat 1 marta).",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="💵 Olish", callback_data=f"claimmoney:{drop_id}:{msg.chat.id}")
+        ]]),
     )
+
+
+@router.callback_query(F.data.startswith("claimmoney:"))
+async def cb_claim_money(call: CallbackQuery):
+    _, drop_id, cid = call.data.split(":")
+    cid = int(cid)
+    game = games.get(cid)
+    if not game or drop_id not in game.money_drops:
+        return await call.answer("⚠️ Bu tashlama endi faol emas.", show_alert=True)
+
+    drop = game.money_drops[drop_id]
+    user = call.from_user
+    if user.id == drop["giver"]:
+        return await call.answer("❌ O'zingiz tashlagan narsani ololmaysiz.", show_alert=True)
+    if user.id in drop["claimed"]:
+        return await call.answer("⚠️ Siz allaqachon oldingiz!", show_alert=True)
+
+    drop["claimed"].add(user.id)
+    get_profile(user.id, user.first_name)
+    add_dollar(user.id, drop["per_claim"])
+    await call.answer(f"✅ Siz {drop['per_claim']}$ oldingiz!", show_alert=True)
 
 
 @router.message(Command("kick"))
@@ -1929,8 +2060,8 @@ async def cb_hangvote(call: CallbackQuery):
         pass
 
 
-@router.callback_query(F.data.startswith("gvote:"))
-async def cb_gvote(call: CallbackQuery):
+@router.callback_query(F.data.startswith("dvote:"))
+async def cb_dvote(call: CallbackQuery, bot: Bot):
     _, tid, cid = call.data.split(":")
     tid, cid = int(tid), int(cid)
     game = games.get(cid)
@@ -1941,39 +2072,38 @@ async def cb_gvote(call: CallbackQuery):
     if not voter or not voter.alive:
         return await call.answer("⚠️ Siz faol o'yinchi emassiz.", show_alert=True)
 
+    if voter.user_id in game.votes:
+        return await call.answer("⚠️ Siz allaqachon ovoz berdingiz! Uni o'zgartirib bo'lmaydi.", show_alert=True)
+
     target = game.get_player_by_id(tid)
     if not target or not target.alive:
         return await call.answer("⚠️ Bu o'yinchi mavjud emas.", show_alert=True)
 
-    if game.votes.get(voter.user_id) == tid:
-        del game.votes[voter.user_id]
-        await call.answer(f"Ovozingiz bekor qilindi.", show_alert=False)
-    else:
-        game.votes[voter.user_id] = tid
-        await call.answer(f"✅ {game.get_display_name(target)}ga ovoz berdingiz!", show_alert=False)
+    game.votes[voter.user_id] = tid
+    await call.answer(f"✅ {game.get_display_name(target)}ga ovoz berdingiz! Ovozni o'zgartirib bo'lmaydi.", show_alert=True)
 
-    voted = len(game.votes)
-    alive  = len(game.alive_players())
-    lines  = []
-    for p in game.alive_players():
-        weight = sum(
-            1
-            for vid, vtid in game.votes.items()
-            if vtid == p.user_id and game.get_player_by_id(vid)
-        )
-        bar = "█" * weight
-        lines.append(f"{game.get_display_name(p)}: {bar} ({weight})")
-
-    secs = get_settings(cid).vote_secs
     try:
         await call.message.edit_text(
-            f"🗳️ *OVOZ BERISH* — {game.day_number}-kun\n"
-            f"⏳ {secs}s | {voted}/{alive} ovoz\n\n"
-            + "\n".join(lines),
-            reply_markup=_group_vote_kb(game),
+            f"🗳️ *Ovoz qabul qilindi!*\n\n✅ Siz *{game.get_display_name(target)}*ga ovoz berdingiz."
         )
     except Exception:
         pass
+
+    if game.vote_msg_id:
+        voted = len(game.votes)
+        alive = len(game.alive_players())
+        try:
+            await bot.edit_message_text(
+                chat_id=cid, message_id=game.vote_msg_id,
+                text=(
+                    f"🗳️ *OVOZ BERISH BOSHLANDI!*\n\n"
+                    "Kim Mafiya ekanini shaxsiy xabarda (bot bilan) tanlang!\n"
+                    "⚠️ Ovoz berilgach uni bekor qilib bo'lmaydi.\n\n"
+                    f"{voted}/{alive} ovoz berdi."
+                ),
+            )
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.startswith("afsungar_revenge:"))
