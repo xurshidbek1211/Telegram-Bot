@@ -34,6 +34,7 @@ class Role(Enum):
     KONCHI = "Konchi"
     TULKI = "Tulki"
     LABARANT = "Labarant"
+    QAROQCHI = "Qaroqchi"
 
 
 class Phase(Enum):
@@ -58,7 +59,7 @@ ROLE_EMOJIS = {
     Role.BO_RI: "🐺", Role.AFSUNGAR: "💣", Role.AFERIST: "🤹🏻",
     Role.SEHRGAR: "🧙‍", Role.GAZABKOR: "🧟", Role.JOKER: "🤡",
     Role.KIMYOGAR: "👨‍🔬", Role.MINIOR: "☠️", Role.KONCHI: "⛏️", Role.TULKI: "🦊",
-    Role.LABARANT: "🧪",
+    Role.LABARANT: "🧪", Role.QAROQCHI: "🏴‍☠️",
 }
 
 ROLE_DESCRIPTIONS_UZ = {
@@ -88,23 +89,18 @@ ROLE_DESCRIPTIONS_UZ = {
     Role.KONCHI: "Har tun 1 ta raqam tanlaysiz: 💎 olmos, 💵 pul yoki 💣 mina topishingiz mumkin. Minaga tushsangiz — halok bo'lasiz!",
     Role.TULKI: "Har tun 1 o'yinchini tanlaysiz. Tinch aholi bo'lsa → *Serjant*ga, Mafiya bo'lsa → *Mafiya*ga, mustaqil bo'lsa → *Qotil*ga aylanasiz!",
     Role.LABARANT: "Mafiya tomonida o'ynaysiz, lekin Mafiya sizni tanimaydi! Har tun birini tanlaysiz: Mafiya a'zosi bo'lsa — himoya qilasiz, tinch aholi yoki mustaqil bo'lsa — o'ldirasiz.\n⚠️ Mafiya sizni otsa — omon qolasiz, lekin Komissar yoki Kimyogar otsa — o'lasiz.",
+    Role.QAROQCHI: "Erkin rol! Har kecha *2 ta amal* tanlaysiz:\n💰 *Pul o'g'irlash* — O'yinchidan 50–100$ o'g'irlaysiz. Puli kam bo'lsa, uning 50% joni ketadi.\n⚔️ *Jon olish* — O'yinchining 50% joni ketadi. Jon 0% ga tushsa o'ladi.",
 }
 
 MIN_PLAYERS = 4
 MAX_PLAYERS = 30
 
-# Ordered list of unique roles introduced one-by-one as player count grows.
-# Tinch Aholi (CITIZEN) and Omadli (OMADLI) are intentionally excluded — they
-# are never randomly assigned (per game design). Each role in this list is
-# used at most once per game so that every night-action role stays a
-# singleton (the engine resolves one actor per role); only MAFIA is safe to
-# duplicate, and is used as the overflow filler beyond the unique pool.
 _ROLE_INTRO_ORDER = [
     Role.DON, Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.MAFIA,
     Role.ADVOKAT, Role.DAYDI, Role.KEZUVCHI, Role.TULKI, Role.JURNALIST,
     Role.YOLLANMA_QOTIL, Role.ADMIRAL, Role.KONCHI, Role.QOTIL, Role.BO_RI,
     Role.AFSUNGAR, Role.AFERIST, Role.SOTQIN, Role.LABARANT, Role.SEHRGAR,
-    Role.GAZABKOR, Role.JOKER, Role.KIMYOGAR, Role.MINIOR,
+    Role.GAZABKOR, Role.JOKER, Role.KIMYOGAR, Role.MINIOR, Role.QAROQCHI,
 ]
 
 
@@ -121,9 +117,6 @@ def _build_role_distribution() -> dict:
 
 ROLE_DISTRIBUTION = _build_role_distribution()
 
-# Safe neutral filler used only when an admin explicitly disables a role
-# (each default distribution has at most one copy of any non-MAFIA role,
-# so this never creates more than one accidental duplicate).
 _DISABLED_ROLE_FILLER = Role.DAYDI
 
 
@@ -144,10 +137,6 @@ def get_role_list(player_count: int, disabled_roles: Optional[set] = None) -> li
 
 
 def get_custom_role_list(config: dict, player_count: int) -> Optional[list]:
-    """Build a role list from an admin-defined custom composition for this
-    exact player count. `config` maps role name -> quantity. Returns None if
-    the config does not sum to player_count (caller should fall back to the
-    default distribution)."""
     roles = []
     for role_name, qty in config.items():
         try:
@@ -169,6 +158,7 @@ class Player:
     last_name: str = ""
     role: Optional[Role] = None
     alive: bool = True
+    hp: int = 100  # 0–100; used by Qaroqchi damage system
     gazabkor_targets: list = field(default_factory=list)
     joker_won: bool = False
 
@@ -194,6 +184,7 @@ class Game:
     advokat_protected: Optional[int] = None
     sehrgar_pending: dict = field(default_factory=dict)
     konchi_rewards: dict = field(default_factory=dict)
+    konchi_morning_msg: Optional[str] = None   # Konchi tunda nima topgani
     hang_confirm_votes: dict = field(default_factory=dict)
     hang_confirm_msg_id: Optional[int] = None
     komissar_found_mafia: Optional[str] = None
@@ -204,6 +195,10 @@ class Game:
     money_drops: dict = field(default_factory=dict)
     lobby_msg_id: Optional[int] = None
     komissar_investigations: dict = field(default_factory=dict)
+    # AFK tracking
+    afk_counters: dict = field(default_factory=dict)       # user_id -> consecutive missed nights
+    night_acted_uids: set = field(default_factory=set)     # who submitted this night
+    night_required_snapshot: set = field(default_factory=set)  # required actors at night start
 
     def add_player(self, user_id: int, username: str, first_name: str, last_name: str = "") -> bool:
         if user_id in self.players or len(self.players) >= MAX_PLAYERS:
@@ -248,8 +243,12 @@ class Game:
         self.aferist_swaps = {}
         self.sehrgar_pending = {}
         self.konchi_rewards = {}
+        self.konchi_morning_msg = None
         self.hang_confirm_votes = {}
         self.komissar_found_mafia = None
+        self.night_acted_uids = set()
+        # Snapshot required actors for AFK tracking
+        self.night_required_snapshot = self.required_night_actors()
 
     def get_display_name(self, player: Player) -> str:
         return self.aferist_swaps.get(player.user_id, player.display_name)
@@ -267,7 +266,8 @@ class Game:
         for role in [Role.KOMISSAR, Role.DOCTOR, Role.QOTIL, Role.KEZUVCHI,
                      Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.DAYDI, Role.JURNALIST,
                      Role.AFERIST, Role.MINIOR, Role.KIMYOGAR, Role.GAZABKOR,
-                     Role.JOKER, Role.SOTQIN, Role.TULKI, Role.LABARANT]:
+                     Role.JOKER, Role.SOTQIN, Role.TULKI, Role.LABARANT, Role.QAROQCHI,
+                     Role.KONCHI]:
             p = self.get_alive_by_role(role)
             if p:
                 required.add(p.user_id)

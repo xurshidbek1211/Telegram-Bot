@@ -72,6 +72,7 @@ async def main():
         BotCommand(command="stats", description="📊 Statistika"),
         BotCommand(command="settings", description="⚙️ Sozlamalar"),
         BotCommand(command="kanal", description="📢 Reklama kanalini sozlash (egasi)"),
+        BotCommand(command="utag", description="📢 Guruh a'zolarini o'yinga chaqirish"),
         BotCommand(command="help", description="❓ Yordam"),
     ])
 

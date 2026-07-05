@@ -17,6 +17,7 @@ class ChatSettings:
     hang_confirm_enabled: bool = True
     hang_confirm_secs: int = 30
     custom_role_configs: dict = field(default_factory=dict)
+    auto_delete_dead: bool = False  # O'lik va tomoshabinlar xabarlarini o'chirish
 
 
 _cache: dict[int, ChatSettings] = {}

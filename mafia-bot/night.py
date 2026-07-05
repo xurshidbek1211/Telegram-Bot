@@ -107,7 +107,6 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     kim_mode = actions.get("kimyogar_mode", "heal")
     kim_kill = kim_save = None
     if kim and kim_t and not blocked(kim.user_id):
-        (kim_kill if kim_mode == "kill" else kim_save)
         if kim_mode == "kill":
             kim_kill = kim_t
         else:
@@ -139,7 +138,6 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
         pending[konchi.user_id] = "konchi_mine"
 
     # 6b. Labarant — protects Mafia team targets, poisons everyone else.
-    # Mafia doesn't know who the Labarant is, so they get no ally info about them.
     labarant = game.get_alive_by_role(Role.LABARANT)
     lab_t = actions.get(Role.LABARANT)
     if labarant and lab_t and lab_t in alive and not blocked(labarant.user_id):
@@ -147,16 +145,66 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
         if lab_target.role in MAFIA_TEAM:
             if lab_t in pending:
                 pending.pop(lab_t)
+            events.append("🧪 Labarant davolovchi eliksirni ishga soldi.")
             await _dm(bot, labarant.user_id, f"🧪 *{lab_target.display_name}*ni himoya qildingiz.")
         else:
             pending[lab_t] = "labarant"
+            events.append("☠️ Labarant o'lim eliksirini ishga soldi.")
             await _dm(bot, labarant.user_id, f"🧪 *{lab_target.display_name}*ni zaharladingiz.")
 
-    # Mafia's bullet can't touch the Labarant — only Komissar/Kimyogar can kill them.
+    # Mafia's bullet can't touch the Labarant
     if labarant and pending.get(labarant.user_id) == "mafia":
         pending.pop(labarant.user_id)
 
-    # 7. Komissar investigation (documents item fakes non-mafia result)
+    # 6c. Qaroqchi — steals money or deals HP damage (independent role)
+    qaroqchi = game.get_alive_by_role(Role.QAROQCHI)
+    if qaroqchi and not blocked(qaroqchi.user_id):
+        for action_key in ["qaroqchi_action1", "qaroqchi_action2"]:
+            action = actions.get(action_key)
+            if not action:
+                continue
+            mode, tid = action
+            target = alive.get(tid)
+            if not target:
+                continue
+            if mode == "steal":
+                amount = random.randint(50, 100)
+                tp = get_profile(tid)
+                if tp.dollar >= amount:
+                    tp.dollar -= amount
+                    save_profile(tp)
+                    qp = get_profile(qaroqchi.user_id)
+                    if not qp.infinite_dollar:
+                        qp.dollar += amount
+                    save_profile(qp)
+                    await _dm(bot, qaroqchi.user_id,
+                        f"💰 *{target.display_name}*dan *{amount}$* o'g'irladingiz!")
+                    await _dm(bot, tid,
+                        f"💸 Kimdir kechasi *{amount}$* o'g'irladi! Hisobingiz kamaydi.")
+                else:
+                    # Not enough money — deal 50 HP damage instead
+                    target.hp = max(0, target.hp - 50)
+                    await _dm(bot, qaroqchi.user_id,
+                        f"💸 *{target.display_name}*da yetarli pul yo'q — uning joni 50% kamaydi.")
+                    await _dm(bot, tid,
+                        f"🗡️ Kimdir kechasi sizga hujum qildi — joniningiz 50% kamaydi! (Qolgan: {target.hp}%)")
+                    if target.hp <= 0 and tid not in pending:
+                        pending[tid] = "qaroqchi_hp"
+            elif mode == "attack":
+                target.hp = max(0, target.hp - 50)
+                await _dm(bot, qaroqchi.user_id,
+                    f"⚔️ *{target.display_name}*ga hujum qildingiz! Joni {target.hp}% qoldi.")
+                await _dm(bot, tid,
+                    f"🗡️ Kechasi birov sizga hujum qildi — joniningiz 50% kamaydi! (Qolgan: {target.hp}%)")
+                if target.hp <= 0 and tid not in pending:
+                    pending[tid] = "qaroqchi_hp"
+
+    # 6d. Enforce HP invariant: any alive player at 0 HP must die (regardless of pending state)
+    for p in list(alive.values()):
+        if p.hp <= 0 and p.user_id not in pending:
+            pending[p.user_id] = "qaroqchi_hp"
+
+    # 7. Komissar investigation
     komissar = game.get_alive_by_role(Role.KOMISSAR)
     serzhant = game.get_alive_by_role(Role.SERZHANT)
     active_k = komissar or (serzhant if not komissar else None)
@@ -228,7 +276,6 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
             if sp:
                 events.append(f"💊 *{sp.display_name}* himoya qilindi va omon qoldi!")
 
-    # shield blocks any night kill; killer_protect blocks qotil specifically
     for tid, cause in list(pending.items()):
         tp = alive.get(tid)
         if not tp:
@@ -440,6 +487,10 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
                 await _dm(bot, gazabkor.user_id,
                     f"🧟 *{tp.display_name}* ro'yxatga qo'shildi. Jami: *{len(gazabkor.gazabkor_targets)}* kishi.\n"
                     f"Kamida 3 ta to'plab, o'zingizni tanlang!")
+
+    # 26. Konchi morning announcement
+    if konchi:
+        events.append(game.konchi_morning_msg or "⛏️ Konchi tunda hech narsa topmadi.")
 
     game.komissar_found_mafia = komissar_found_mafia_name
     return events

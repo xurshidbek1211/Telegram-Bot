@@ -1,0 +1,2 @@
+- [Mafia Bot Architecture](mafia-bot-arch.md) — night actions use Role enum keys (not UID), only mafia/qaroqchi store UID keys; all_night_actions_done checks keys().
+- [Qaroqchi Multi-step Pattern](qaroqchi-callbacks.md) — 4-step callback flow with interim state stored in night_actions dict; hp system only for Qaroqchi.

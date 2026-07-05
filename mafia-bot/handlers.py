@@ -41,6 +41,7 @@ ROLE_NAMES_UZ = {
     Role.JOKER: "Joker", Role.KIMYOGAR: "Kimyogar",
     Role.MINIOR: "Minior", Role.KONCHI: "Konchi",
     Role.TULKI: "Tulki", Role.LABARANT: "Labarant",
+    Role.QAROQCHI: "Qaroqchi",
 }
 
 PASSIVE_NIGHT_ROLES = {
@@ -119,7 +120,6 @@ async def _group_link(bot: Bot, chat_id: int) -> Optional[str]:
 
 
 def _dm_entry_kb(bot_username: Optional[str], text: str, chat_id: int = None, payload: str = None) -> Optional[InlineKeyboardMarkup]:
-    """Plain button that only opens the bot's private chat — never triggers /start automatically."""
     if not bot_username:
         return None
     return InlineKeyboardMarkup(inline_keyboard=[[
@@ -256,6 +256,32 @@ async def _do_night_resolution(bot: Bot, game: Game):
         return
     settings = get_settings(game.chat_id)
     events = await resolve_night(game, bot)
+
+    # ── AFK check ──
+    required = game.night_required_snapshot
+    acted = game.night_acted_uids
+    afk_kicked = []
+    for uid in list(required):
+        player = game.get_player_by_id(uid)
+        if not player or not player.alive:
+            game.afk_counters.pop(uid, None)
+            continue
+        if uid in acted:
+            game.afk_counters[uid] = 0
+        else:
+            game.afk_counters[uid] = game.afk_counters.get(uid, 0) + 1
+            if game.afk_counters[uid] >= 2:
+                game.eliminate_player(uid)
+                afk_kicked.append(player)
+                game.afk_counters.pop(uid, None)
+
+    for p in afk_kicked:
+        rn = ROLE_NAMES_UZ.get(p.role, "")
+        em = ROLE_EMOJIS.get(p.role, "")
+        events.append(
+            f"😴 *{p.display_name}* uxlab qolgani uchun o'yindan chiqarildi. Roli: {em} *{rn}*"
+        )
+
     game.phase = Phase.DAY
 
     winner = game.check_win_condition()
@@ -419,7 +445,6 @@ async def _do_vote_resolution(bot: Bot, game: Game):
             await run_night(bot, game.chat_id)
             return
 
-    # hang_protect item cancels the elimination
     from profiles import get_profile, save_profile as _sp
     ep = get_profile(eliminated_id)
     if ep.hang_protect > 0:
@@ -435,7 +460,6 @@ async def _do_vote_resolution(bot: Bot, game: Game):
         await run_night(bot, game.chat_id)
         return
 
-    # Afsungar day revenge
     if eliminated.role == Role.AFSUNGAR:
         game.eliminate_player(eliminated_id)
         await bot.send_message(
@@ -605,6 +629,7 @@ async def _send_night_actions(bot: Bot, game: Game):
             targets = [p for p in alive if p.role in MAFIA_TEAM and p.user_id != uid]
             if not targets:
                 game.night_actions[Role.ADVOKAT] = uid
+                game.night_acted_uids.add(uid)  # auto-skip counts as acted (no AFK penalty)
                 await _dm(bot, uid,
                     f"🌙 *{game.day_number}-kecha*\n\n"
                     "👨🏼‍💼 Himoya qilish uchun boshqa Mafiya yo'q. Harakatingiz o'tkazib yuborildi.")
@@ -721,6 +746,7 @@ async def _send_night_actions(bot: Bot, game: Game):
                     InlineKeyboardMarkup(inline_keyboard=rows))
             else:
                 game.night_actions[Role.SOTQIN] = 0
+                game.night_acted_uids.add(uid)
                 await _dm(bot, uid,
                     f"🌙 *{game.day_number}-kecha*\n\n🤓 Fosh qilish uchun ma'lum nishon yo'q.")
 
@@ -753,6 +779,16 @@ async def _send_night_actions(bot: Bot, game: Game):
                 f"⛏️ *Konchi:* kon qazing! 10 ta raqam ichida 💎 3 olmos, 💣 2 mina, 💵 5 pul slot bor.\n"
                 f"Bir raqam tanlang ({secs}s) — xohlasangiz o'tkazib yuboring:", kb)
 
+        elif role == Role.QAROQCHI:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💰 Pul o'g'irlash", callback_data=f"qar_mode1:steal:{chat_id}")],
+                [InlineKeyboardButton(text="⚔️ Jon olish", callback_data=f"qar_mode1:attack:{chat_id}")],
+            ])
+            await _dm(bot, uid,
+                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"🏴‍☠️ *Qaroqchi:* Bu kecha 2 ta amal tanlaysiz.\n\n"
+                f"*1-amal tanlang ({secs}s):*", kb)
+
         elif role in PASSIVE_NIGHT_ROLES:
             await _dm(bot, uid,
                 f"🌙 *{game.day_number}-kecha*\n\n{PASSIVE_MESSAGES.get(role, 'Dam oling.')}")
@@ -762,9 +798,11 @@ def _auto_passive(game: Game):
     for p in game.alive_players():
         if p.role in PASSIVE_NIGHT_ROLES:
             game.night_actions[f"passive_{p.user_id}"] = True
+            game.night_acted_uids.add(p.user_id)
     serzhant = game.get_alive_by_role(Role.SERZHANT)
     if serzhant and game.get_alive_by_role(Role.KOMISSAR):
         game.night_actions[Role.SERZHANT] = 0
+        game.night_acted_uids.add(serzhant.user_id)
 
 # ──────────────────────────────────────────────
 # Commands
@@ -809,6 +847,7 @@ async def cmd_start(msg: Message, bot: Bot):
             "/sozlash — Guruh sozlamalari (admin)\n"
             "/kanal — Reklama kanalini sozlash (bot egasi)\n"
             "/reyting — Guruh reytingi (TOP 20)\n"
+            "/utag — Guruh a'zolarini o'yinga chaqirish\n"
             "/stats — Statistika\n"
             "/rules — Qoidalar\n"
             "/roles — Barcha rollar haqida",
@@ -816,12 +855,10 @@ async def cmd_start(msg: Message, bot: Bot):
         )
         return
 
-    # Group chat: /start now launches the game (previously /startgame)
     await _launch_game(msg, bot)
 
 
 async def _open_lobby(msg: Message, bot: Bot):
-    """Registration: create/open the join lobby for a new game."""
     if msg.chat.type == "private":
         return await msg.answer("⚠️ Bu buyruq faqat guruh chatlarda ishlaydi.")
 
@@ -856,7 +893,6 @@ async def _open_lobby(msg: Message, bot: Bot):
 
 
 async def _handle_private_join(msg: Message, bot: Bot, payload: str):
-    """Handle a player joining via the private-chat deep link from the group's Join button."""
     try:
         gid = int(payload.split("_", 1)[1])
     except (ValueError, IndexError):
@@ -905,13 +941,13 @@ async def cmd_rules(msg: Message):
 @router.message(Command("roles"))
 async def cmd_roles(msg: Message):
     teams = {
-        "🔴 *Mafiya jamoasi:*": [Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST],
+        "🔴 *Mafiya jamoasi:*": [Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.LABARANT],
         "🔵 *Fuqarolar jamoasi:*": [Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT,
                                     Role.DAYDI, Role.KEZUVCHI, Role.ADMIRAL, Role.SOTQIN,
                                     Role.KONCHI],
         "⚪ *Mustaqil rollar:*": [Role.QOTIL, Role.BO_RI, Role.AFSUNGAR, Role.AFERIST,
-                                  Role.SEHRGAR, Role.GAZABKOR, Role.JOKER, Role.KIMYOGAR, Role.MINIOR,
-                                  Role.TULKI],
+                                  Role.SEHRGAR, Role.GAZABKOR, Role.JOKER, Role.KIMYOGAR,
+                                  Role.MINIOR, Role.TULKI, Role.QAROQCHI],
     }
     for label, roles in teams.items():
         lines = [label]
@@ -984,33 +1020,97 @@ async def cmd_leave(msg: Message):
     )
 
 
+# ── /utag — Guruh a'zolarini chaqirish ──
+
+@router.message(Command("utag"))
+async def cmd_utag(msg: Message, bot: Bot):
+    if msg.chat.type == "private":
+        return await msg.answer("⚠️ Bu buyruq faqat guruh chatlarda ishlaydi.")
+
+    chat_id = msg.chat.id
+
+    # Collect known players from ratings (played before) + current game lobby
+    from ratings import _cache as rat_cache, _init as rat_init
+    rat_init()
+    known: dict[int, str] = {}  # user_id -> first_name
+
+    # From ratings (historical players)
+    for uid, entry in rat_cache.get(chat_id, {}).items():
+        if entry.first_name:
+            known[uid] = entry.first_name
+
+    # From current game lobby (may have new players with usernames)
+    game = games.get(chat_id)
+    if game and game.phase == Phase.LOBBY:
+        for p in game.players.values():
+            if p.username:
+                known[p.user_id] = f"@{p.username}"  # prefer @username
+            elif p.first_name:
+                known[p.user_id] = p.first_name
+
+    if not known:
+        return await msg.answer(
+            "🎮 <b>Mafiya o'yiniga taklif!</b>\n\n"
+            "Bu guruhda hali hech kim o'ynamagan. /game bilan ro'yxatni oching!",
+            parse_mode="HTML",
+        )
+
+    # Build mention list (HTML)
+    mentions = []
+    for uid, name in known.items():
+        if name.startswith("@"):
+            mentions.append(name)
+        else:
+            safe_name = name.replace("<", "&lt;").replace(">", "&gt;").replace("&", "&amp;")
+            mentions.append(f'<a href="tg://user?id={uid}">{safe_name}</a>')
+
+    header = (
+        "🎮 <b>Mafiya o'yiniga chaqiruv!</b>\n\n"
+        "O'yinga qo'shilish uchun /game bosing!\n\n"
+    )
+    footer = "\n\n👆 <b>O'yinga qo'shiling!</b>"
+
+    # Send in chunks of 30 mentions to stay within Telegram limits
+    chunk_size = 30
+    for i in range(0, len(mentions), chunk_size):
+        chunk = mentions[i:i + chunk_size]
+        is_first = (i == 0)
+        is_last = (i + chunk_size >= len(mentions))
+        text = (header if is_first else "") + " ".join(chunk) + (footer if is_last else "")
+        await msg.answer(text, parse_mode="HTML")
+        if not is_last:
+            await asyncio.sleep(0.5)
+
+
 TOGGLEABLE_ROLES = [
     r for r in Role if r not in (Role.CITIZEN, Role.OMADLI, Role.DON, Role.MAFIA)
 ]
 
 DURATION_OPTIONS = [15, 30, 45, 60, 90]
 
-# Role composition editor: DON is always exactly 1 (mandatory), MAFIA supports
-# a numeric quantity (the only role the night engine can safely duplicate),
-# every other role is a simple on/off toggle for that player count.
 RCFG_MIN_COUNT = 4
 RCFG_MAX_COUNT = 30
 RCFG_TOGGLE_ROLES = [
     r for r in Role if r not in (Role.CITIZEN, Role.OMADLI, Role.DON, Role.MAFIA)
 ]
 
-# Transient in-memory editing sessions, keyed by admin user_id (editing happens in DM).
 _rcfg_sessions: dict[int, dict] = {}
 
 
 def _sozlash_main_kb(chat_id: int, settings: ChatSettings) -> InlineKeyboardMarkup:
     leave_label = "✅ /leave yoqilgan" if settings.leave_enabled else "❌ /leave o'chirilgan"
     protect_label = "✅ Himoya buyumlari yoqilgan" if settings.protection_enabled else "❌ Himoya buyumlari o'chirilgan"
+    autodel_label = (
+        "🗑 O'lik xabarlar: ✅ Yoqilgan"
+        if settings.auto_delete_dead
+        else "🗑 O'lik xabarlar: ❌ O'chirilgan"
+    )
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🃏 Rollarni yoqish/o'chirish", callback_data=f"soz:roles:0:{chat_id}")],
         [InlineKeyboardButton(text="🎭 Rollarni sozlash (o'yinchilar soni bo'yicha)", callback_data=f"soz:rcfgc:0:{chat_id}")],
         [InlineKeyboardButton(text=leave_label, callback_data=f"soz:toggle_leave:{chat_id}")],
         [InlineKeyboardButton(text=protect_label, callback_data=f"soz:toggle_protect:{chat_id}")],
+        [InlineKeyboardButton(text=autodel_label, callback_data=f"soz:toggle_autodel:{chat_id}")],
         [InlineKeyboardButton(text="⏳ Vaqtlarni sozlash", callback_data=f"soz:durations:{chat_id}")],
         [InlineKeyboardButton(text="✅ Yopish", callback_data=f"soz:close:{chat_id}")],
     ])
@@ -1043,16 +1143,18 @@ def _rcfg_counts_kb(chat_id: int, settings: ChatSettings, page: int = 0) -> Inli
 
 
 def _rcfg_session_total(session: dict) -> int:
-    return 1 + (1 + session["mafia_extra"]) + len(session["roles"])
+    # 1 Don + mafia_extra Mafias + selected other roles
+    return 1 + session["mafia_extra"] + len(session["roles"])
 
 
 def _rcfg_editor_kb(chat_id: int, session: dict, page: int = 0) -> InlineKeyboardMarkup:
     per_page = 6
     start = page * per_page
     roles_page = RCFG_TOGGLE_ROLES[start:start + per_page]
+    mafia_count = session["mafia_extra"]
     rows = [[
         InlineKeyboardButton(text="➖", callback_data=f"soz:rcfgm:dec:{page}:{chat_id}"),
-        InlineKeyboardButton(text=f"{ROLE_EMOJIS[Role.MAFIA]} Mafiya: {1 + session['mafia_extra']}", callback_data="noop"),
+        InlineKeyboardButton(text=f"{ROLE_EMOJIS[Role.MAFIA]} Mafiya: {mafia_count}", callback_data="noop"),
         InlineKeyboardButton(text="➕", callback_data=f"soz:rcfgm:inc:{page}:{chat_id}"),
     ]]
     for r in roles_page:
@@ -1085,6 +1187,7 @@ def _rcfg_editor_text(session: dict) -> str:
     return (
         f"🎭 *Rollarni sozlash — {target} o'yinchi*\n\n"
         f"Har bir rolni yoqing/o'chiring. Mafiya sonini +/- bilan o'zgartiring.\n"
+        f"Don har doim 1 ta. Mafiya soni 0 dan boshlaydi.\n"
         f"Jami tanlangan rollar soni o'yinchilar soniga teng bo'lishi kerak.\n\n"
         f"Hozirgi holat: *{total}/{target}*"
     )
@@ -1214,6 +1317,16 @@ async def cb_sozlash(call: CallbackQuery):
             reply_markup=_sozlash_main_kb(chat_id, settings),
         )
 
+    elif action == "toggle_autodel":
+        settings.auto_delete_dead = not settings.auto_delete_dead
+        save_settings(settings)
+        status = "yoqildi ✅" if settings.auto_delete_dead else "o'chirildi ❌"
+        await call.answer(f"🗑 O'lik xabarlarni o'chirish {status}", show_alert=False)
+        await call.message.edit_text(
+            "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
+            reply_markup=_sozlash_main_kb(chat_id, settings),
+        )
+
     elif action == "durations":
         await call.message.edit_text(
             "⏳ *Bosqich vaqtlarini sozlash*",
@@ -1242,10 +1355,11 @@ async def cb_sozlash(call: CallbackQuery):
         existing = settings.custom_role_configs.get(str(count))
         if existing:
             roles = {name for name, qty in existing.items() if name not in ("DON", "MAFIA") and qty}
-            mafia_extra = max(0, existing.get("MAFIA", 1) - 1)
+            # New format: MAFIA value = direct count (0 = no extra mafias)
+            mafia_extra = max(0, existing.get("MAFIA", 0))
         else:
             roles = set()
-            mafia_extra = 0
+            mafia_extra = 0  # Default: 0 Mafias (only Don)
         session = {"chat_id": chat_id, "count": count, "roles": roles, "mafia_extra": mafia_extra}
         _rcfg_sessions[call.from_user.id] = session
         await call.message.edit_text(_rcfg_editor_text(session), reply_markup=_rcfg_editor_kb(chat_id, session, 0))
@@ -1287,7 +1401,8 @@ async def cb_sozlash(call: CallbackQuery):
             return await call.answer("⚠️ Sessiya topilmadi, qaytadan boshlang.", show_alert=True)
         if _rcfg_session_total(session) != session["count"]:
             return await call.answer("⚠️ Jami rollar soni mos kelmayapti.", show_alert=True)
-        config = {"DON": 1, "MAFIA": 1 + session["mafia_extra"]}
+        # Save: MAFIA = mafia_extra (can be 0)
+        config = {"DON": 1, "MAFIA": session["mafia_extra"]}
         for role_name in session["roles"]:
             config[role_name] = 1
         settings.custom_role_configs[str(session["count"])] = config
@@ -1320,7 +1435,6 @@ async def cb_noop(call: CallbackQuery):
 
 
 def _assign_roles_with_preferences(game: Game, disabled_roles: list = None, custom_role_configs: dict = None):
-    """Assign roles, honoring active_role preferences from player profiles."""
     import random
     from game import get_role_list, get_custom_role_list
     players = list(game.players.values())
@@ -1346,7 +1460,8 @@ def _assign_roles_with_preferences(game: Game, disabled_roles: list = None, cust
             if desired_role in remaining:
                 assigned[player.user_id] = desired_role
                 remaining.remove(desired_role)
-                prof.active_roles.remove(key if key in prof.active_roles else key)
+                if key in prof.active_roles:
+                    prof.active_roles.remove(key)
                 save_profile(prof)
                 break
 
@@ -1360,7 +1475,6 @@ def _assign_roles_with_preferences(game: Game, disabled_roles: list = None, cust
 
 
 async def _launch_game(msg: Message, bot: Bot):
-    """Starts the actual game from an open lobby (was /startgame)."""
     chat_id = msg.chat.id
     game = games.get(chat_id)
     if not game or game.phase == Phase.ENDED:
@@ -1512,8 +1626,9 @@ async def cmd_kanal(msg: Message):
     parts = msg.text.split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
         current = get_promo_channel()
+        not_set = "o'rnatilmagan"
         return await msg.answer(
-            f"📢 Hozirgi reklama kanali: *{escape_md(current) if current else 'o‘rnatilmagan'}*\n\n"
+            f"📢 Hozirgi reklama kanali: *{escape_md(current) if current else not_set}*\n\n"
             "O'rnatish uchun: `/kanal @username` yoki `/kanal https://t.me/...`"
         )
 
@@ -2077,7 +2192,7 @@ async def cb_newgame_btn(call: CallbackQuery, bot: Bot):
 
     await call.answer("✅ Yangi lobby ochildi!")
     bot_username = await _get_bot_username(bot)
-    await bot.send_message(
+    sent = await bot.send_message(
         chat_id,
         f"🎮 *RO'YXATDAN O'TISH BOSHLANDI!*\n\n"
         f"👤 *{escape_md(user.first_name)}* o'yinni yaratdi.\n\n"
@@ -2087,10 +2202,11 @@ async def cb_newgame_btn(call: CallbackQuery, bot: Bot):
         f"{_player_list(game)}",
         reply_markup=_lobby_kb(chat_id, bot_username),
     )
+    game.lobby_msg_id = sent.message_id
 
 
 @router.callback_query(F.data.startswith("join:"))
-async def cb_join(call: CallbackQuery):
+async def cb_join(call: CallbackQuery, bot: Bot):
     chat_id = int(call.data.split(":")[1])
     game = games.get(chat_id)
     if not game or game.phase != Phase.LOBBY:
@@ -2099,14 +2215,18 @@ async def cb_join(call: CallbackQuery):
     user = call.from_user
     if game.add_player(user.id, user.username or "", user.first_name, user.last_name or ""):
         await call.answer(f"✅ Qo'shildingiz! Jami: {len(game.players)} o'yinchi.")
-        await call.message.edit_text(
-            f"🎮 *YANGI MAFIYA O'YINI!*\n\n"
-            f"Quyidagi tugmani bosib qo'shiling!\n"
-            f"Tayyor bo'lganda admin /startgame bossin.\n\n"
-            f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
-            f"{_player_list(game)}",
-            reply_markup=_lobby_kb(chat_id),
-        )
+        # Update the lobby message (whether it's this message or the pinned lobby)
+        await _update_lobby_message(bot, game)
+        # Also edit this message if it's not the lobby message
+        if call.message.message_id != game.lobby_msg_id:
+            try:
+                bot_username = await _get_bot_username(bot)
+                await call.message.edit_text(
+                    _lobby_text(game),
+                    reply_markup=_lobby_kb(chat_id, bot_username),
+                )
+            except Exception:
+                pass
         try:
             await call.bot.send_message(user.id,
                 "✅ *O'yinga qo'shildingiz!*\n\nO'yin boshlanishini kuting. "
@@ -2134,6 +2254,7 @@ async def _night_cb(call: CallbackQuery, action_key, target_id: int, chat_id: in
         return await call.answer("⚠️ Bu o'yinchi mavjud emas.", show_alert=True)
 
     game.night_actions[action_key] = target_id
+    game.night_acted_uids.add(call.from_user.id)
     await call.answer(confirm_text)
     await call.message.edit_text(f"✅ {confirm_text}")
 
@@ -2157,6 +2278,7 @@ async def cb_nk(call: CallbackQuery):
 
     game.night_actions["mafia_kill"] = tid
     game.night_actions[actor.user_id] = tid
+    game.night_acted_uids.add(call.from_user.id)
     await call.answer(f"🔪 Nishon: {target.display_name}")
     await call.message.edit_text(f"🔪 Nishon tanlandi: *{target.display_name}*")
     if game.all_night_actions_done():
@@ -2296,6 +2418,7 @@ async def cb_ngaz(call: CallbackQuery):
     if not actor:
         return await call.answer("⚠️ Siz faol emassiz.", show_alert=True)
     game.night_actions[Role.GAZABKOR] = tid
+    game.night_acted_uids.add(call.from_user.id)
     if tid == actor.user_id:
         await call.answer("🧟 O'zingizni tanladingiz — natija tunda!")
         await call.message.edit_text("🧟 O'zingizni tanladingiz — natija tunda aniqlanadi!")
@@ -2321,6 +2444,7 @@ async def cb_nsot(call: CallbackQuery):
     if not game or game.phase != Phase.NIGHT:
         return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
     game.night_actions[Role.SOTQIN] = tid
+    game.night_acted_uids.add(call.from_user.id)
     if tid == 0:
         await call.answer("🤓 O'tkazib yubordingiz.")
         await call.message.edit_text("🤓 Bu kecha o'tkazib yubordingiz.")
@@ -2492,6 +2616,7 @@ async def cb_nkonchi(call: CallbackQuery):
     typ, amount = rewards[num]
     del game.konchi_rewards[uid]
     game.night_actions[Role.KONCHI] = num
+    game.night_acted_uids.add(uid)
 
     p = get_profile(uid, call.from_user.first_name)
 
@@ -2499,16 +2624,19 @@ async def cb_nkonchi(call: CallbackQuery):
         add_diamond(uid, amount)
         result = f"💎 *{amount} olmos* topdingiz!"
         detail = f"Umumiy olmos: {p.diamond + amount} 💎"
+        game.konchi_morning_msg = "⛏️ Konchi tunda oltin topdi."
     elif typ == "money":
         add_dollar(uid, amount)
         result = f"💵 *{amount}$* topdingiz!"
         detail = f"Umumiy dollar: {p.dollar + amount}$"
+        game.konchi_morning_msg = "⛏️ Konchi tunda temir topdi."
     else:
         game.night_actions["konchi_mine"] = True
         p.mines += 1
         save_profile(p)
         result = "💣 *MINAGA TUSHDINGIZ!*"
         detail = "Bu kecha halok bo'lasiz..."
+        game.konchi_morning_msg = "⛏️ Konchi tunda minaga tushdi!"
 
     all_labels = {"diamond": "💎", "money": "💵", "mine": "💣"}
     revealed = " ".join(
@@ -2523,3 +2651,171 @@ async def cb_nkonchi(call: CallbackQuery):
         f"{revealed}"
     )
     await call.answer(result.replace("*", ""))
+
+    if game.all_night_actions_done():
+        asyncio.create_task(_do_night_resolution(call.bot, game))
+
+
+# ── Qaroqchi night action callbacks (multi-step) ──
+
+@router.callback_query(F.data.startswith("qar_mode1:"))
+async def cb_qar_mode1(call: CallbackQuery):
+    """Step 1: Qaroqchi picks action type for 1st action."""
+    _, mode, cid = call.data.split(":")
+    cid = int(cid)
+    game = games.get(cid)
+    if not game or game.phase != Phase.NIGHT:
+        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
+    actor = game.get_player_by_id(call.from_user.id)
+    if not actor or not actor.alive or actor.role != Role.QAROQCHI:
+        return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
+
+    game.night_actions["qaroqchi_step1_mode"] = mode
+    label = "💰 Pul o'g'irlash" if mode == "steal" else "⚔️ Jon olish"
+
+    # Show target list for 1st action
+    kb = _target_kb(game, "qar_t1", actor_id=actor.user_id)
+    await call.message.edit_text(
+        f"🏴‍☠️ *{label}* — Nishon tanlang (1-amal):",
+        reply_markup=kb,
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("qar_t1:"))
+async def cb_qar_t1(call: CallbackQuery):
+    """Step 2: Qaroqchi picks target for 1st action, then shows 2nd action choice."""
+    _, tid, cid = call.data.split(":")
+    tid, cid = int(tid), int(cid)
+    game = games.get(cid)
+    if not game or game.phase != Phase.NIGHT:
+        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
+    actor = game.get_player_by_id(call.from_user.id)
+    if not actor or not actor.alive or actor.role != Role.QAROQCHI:
+        return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
+    target = game.get_player_by_id(tid)
+    if not target or not target.alive:
+        return await call.answer("⚠️ Bu o'yinchi mavjud emas.", show_alert=True)
+
+    mode1 = game.night_actions.get("qaroqchi_step1_mode", "steal")
+    game.night_actions["qaroqchi_action1"] = (mode1, tid)
+    label1 = "💰 Pul o'g'irlash" if mode1 == "steal" else "⚔️ Jon olish"
+
+    # Show 2nd action choice
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💰 Pul o'g'irlash", callback_data=f"qar_mode2:steal:{cid}")],
+        [InlineKeyboardButton(text="⚔️ Jon olish", callback_data=f"qar_mode2:attack:{cid}")],
+    ])
+    await call.message.edit_text(
+        f"✅ 1-amal: *{label1}* → *{target.display_name}*\n\n"
+        f"*2-amal tanlang:*",
+        reply_markup=kb,
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("qar_mode2:"))
+async def cb_qar_mode2(call: CallbackQuery):
+    """Step 3: Qaroqchi picks action type for 2nd action."""
+    _, mode, cid = call.data.split(":")
+    cid = int(cid)
+    game = games.get(cid)
+    if not game or game.phase != Phase.NIGHT:
+        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
+    actor = game.get_player_by_id(call.from_user.id)
+    if not actor or not actor.alive or actor.role != Role.QAROQCHI:
+        return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
+
+    game.night_actions["qaroqchi_step2_mode"] = mode
+    label = "💰 Pul o'g'irlash" if mode == "steal" else "⚔️ Jon olish"
+
+    kb = _target_kb(game, "qar_t2", actor_id=actor.user_id)
+    await call.message.edit_text(
+        f"🏴‍☠️ *{label}* — Nishon tanlang (2-amal):",
+        reply_markup=kb,
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("qar_t2:"))
+async def cb_qar_t2(call: CallbackQuery):
+    """Step 4: Qaroqchi picks target for 2nd action — done!"""
+    _, tid, cid = call.data.split(":")
+    tid, cid = int(tid), int(cid)
+    game = games.get(cid)
+    if not game or game.phase != Phase.NIGHT:
+        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
+    actor = game.get_player_by_id(call.from_user.id)
+    if not actor or not actor.alive or actor.role != Role.QAROQCHI:
+        return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
+    target = game.get_player_by_id(tid)
+    if not target or not target.alive:
+        return await call.answer("⚠️ Bu o'yinchi mavjud emas.", show_alert=True)
+
+    mode2 = game.night_actions.get("qaroqchi_step2_mode", "steal")
+    game.night_actions["qaroqchi_action2"] = (mode2, tid)
+    game.night_actions[Role.QAROQCHI] = True
+    game.night_actions[actor.user_id] = True   # Also store uid for all_night_actions_done
+    game.night_acted_uids.add(call.from_user.id)
+
+    a1 = game.night_actions.get("qaroqchi_action1")
+    label1 = "💰 Pul o'g'irlash" if a1 and a1[0] == "steal" else "⚔️ Jon olish"
+    t1 = game.get_player_by_id(a1[1]) if a1 else None
+    label2 = "💰 Pul o'g'irlash" if mode2 == "steal" else "⚔️ Jon olish"
+
+    await call.message.edit_text(
+        f"✅ *Qaroqchi amallar tanlandi!*\n\n"
+        f"1-amal: *{label1}* → *{t1.display_name if t1 else '?'}*\n"
+        f"2-amal: *{label2}* → *{target.display_name}*\n\n"
+        f"Natija ertalab ma'lum bo'ladi."
+    )
+    await call.answer("✅ Ikki amal tanlandi!")
+
+    if game.all_night_actions_done():
+        asyncio.create_task(_do_night_resolution(call.bot, game))
+
+
+# ──────────────────────────────────────────────
+# Auto-delete dead/spectator messages
+# ──────────────────────────────────────────────
+
+@router.message(F.chat.type.in_({"group", "supergroup"}))
+async def auto_delete_handler(msg: Message, bot: Bot):
+    """Auto-delete messages from dead players and spectators during active game."""
+    # Check if bot command — don't delete commands
+    if msg.text and msg.text.startswith("/"):
+        return
+
+    chat_id = msg.chat.id
+    settings = get_settings(chat_id)
+    if not settings.auto_delete_dead:
+        return
+
+    game = games.get(chat_id)
+    if not game or game.phase in (Phase.LOBBY, Phase.ENDED):
+        return
+
+    # Allow messages starting with "!"
+    text = msg.text or msg.caption or ""
+    if text.startswith("!"):
+        return
+
+    if not msg.from_user:
+        return
+
+    user_id = msg.from_user.id
+    player = game.get_player_by_id(user_id)
+
+    should_delete = False
+    if player is None:
+        # Spectator (not in this game)
+        should_delete = True
+    elif not player.alive:
+        # Dead player
+        should_delete = True
+
+    if should_delete:
+        try:
+            await bot.delete_message(chat_id, msg.message_id)
+        except Exception:
+            pass
