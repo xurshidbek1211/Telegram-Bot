@@ -344,6 +344,10 @@ async def run_vote(bot: Bot, chat_id: int):
         reply_markup=_dm_entry_kb(bot_username, "🗳️ Ovoz berish (DM)", chat_id, "vote"),
     )
     game.vote_msg_id = msg.message_id
+    game.joker_pick = None  # reset target's choice for this vote
+
+    # Send Joker cards to the selected target at the start of voting
+    await _send_joker_cards(bot, game, chat_id)
 
     for p in alive:
         try:
@@ -409,11 +413,16 @@ async def _do_vote_resolution(bot: Bot, game: Game):
     if game.phase != Phase.VOTING:
         return
 
+    # If Joker's target never picked a card, treat it as the Death Card.
+    if game.joker_pending and game.joker_pick is None:
+        await _resolve_joker_card(bot, game, game.chat_id, 0, auto=True)
+
     eliminated_id = game.tally_votes()
     counts: dict = {}
     for vid, tid in game.votes.items():
         voter = game.get_player_by_id(vid)
-        if voter:
+        target = game.get_player_by_id(tid)
+        if voter and voter.alive and target and target.alive:
             counts[tid] = counts.get(tid, 0) + 1
 
     lines = [
@@ -738,10 +747,17 @@ async def _send_night_actions(bot: Bot, game: Game):
                 f"O'zingizni tanlasangiz, barchasi o'ladi (g'alaba uchun kamida 3 ta) ({secs}s):", kb)
 
         elif role == Role.JOKER:
-            kb = _target_kb(game, "njok", actor_id=uid)
+            # Joker picks which of the 4 face-down cards is the Death Card,
+            # then picks a target. The cards are sent to the target at voting start.
+            card_labels = ["🎴 1", "🎴 2", "🎴 3", "🎴 4"]
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=label, callback_data=f"jokcard:{i}:{chat_id}")]
+                for i, label in enumerate(card_labels)
+            ])
             await _dm(bot, uid,
                 f"🌙 *{game.day_number}-kecha*\n\n"
-                f"🤡 Kimga 4 ta karta yuborasiz? (25% o'lim ehtimoli) ({secs}s):", kb)
+                f"🤡 *O'lim kartasini tanlang:* 4 ta karta orasida aynan qaysi biri o'lim kartasi?\n"
+                f"Tanlangan kartani maqsadli o'yinchiga ovoz berish bosqachasida yuboramiz. ({secs}s):", kb)
 
         elif role == Role.SOTQIN:
             suspects = [p for p in alive if p.role in (Role.DON, Role.MAFIA, Role.QOTIL)]
@@ -790,14 +806,15 @@ async def _send_night_actions(bot: Bot, game: Game):
                 f"Bir raqam tanlang ({secs}s) — xohlasangiz o'tkazib yuboring:", kb)
 
         elif role == Role.QAROQCHI:
+            # Qaroqchi performs exactly ONE action per night.
             kb = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💰 Pul o'g'irlash", callback_data=f"qar_mode1:steal:{chat_id}")],
-                [InlineKeyboardButton(text="⚔️ Jon olish", callback_data=f"qar_mode1:attack:{chat_id}")],
+                [InlineKeyboardButton(text="💰 Pul o'g'irlash", callback_data=f"qar_mode:steal:{chat_id}")],
+                [InlineKeyboardButton(text="⚔️ Jon olish", callback_data=f"qar_mode:attack:{chat_id}")],
             ])
             await _dm(bot, uid,
                 f"🌙 *{game.day_number}-kecha*\n\n"
-                f"🏴‍☠️ *Qaroqchi:* Bu kecha 2 ta amal tanlaysiz.\n\n"
-                f"*1-amal tanlang ({secs}s):*", kb)
+                f"🏴‍☠️ *Qaroqchi:* Bu kecha faqat *1 ta amal* tanlaysiz.\n\n"
+                f"Amal tanlang ({secs}s):", kb)
 
         elif role in PASSIVE_NIGHT_ROLES:
             await _dm(bot, uid,
@@ -2460,10 +2477,157 @@ async def cb_ngaz(call: CallbackQuery):
         asyncio.create_task(_do_night_resolution(call.bot, game))
 
 
-@router.callback_query(F.data.startswith("njok:"))
-async def cb_njok(call: CallbackQuery):
+@router.callback_query(F.data.startswith("jokcard:"))
+async def cb_jokcard(call: CallbackQuery):
+    """Joker selects which of the 4 face-down cards is the Death Card."""
+    _, idx, cid = call.data.split(":")
+    idx, cid = int(idx), int(cid)
+    game = games.get(cid)
+    if not game or game.phase != Phase.NIGHT:
+        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
+    actor = game.get_player_by_id(call.from_user.id)
+    if not actor or not actor.alive or actor.role != Role.JOKER:
+        return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
+
+    game.night_actions["joker_death_card"] = idx
+    kb = _target_kb(game, "joktarget", actor_id=actor.user_id)
+    await call.message.edit_text(
+        f"🤡 *O'lim kartasi tanlandi:* 🎴 *{idx + 1}*\n\n"
+        f"Endi 4 ta kartani yuborish uchun maqsadli o'yinchini tanlang:",
+        reply_markup=kb,
+    )
+    await call.answer("🎴 O'lim kartasi tanlandi.")
+
+
+@router.callback_query(F.data.startswith("joktarget:"))
+async def cb_joktarget(call: CallbackQuery):
+    """Joker selects the target player for the card game."""
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.JOKER, int(tid), int(cid), "🤡 Kartalar yuborildi")
+    tid, cid = int(tid), int(cid)
+    game = games.get(cid)
+    if not game or game.phase != Phase.NIGHT:
+        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
+    actor = game.get_player_by_id(call.from_user.id)
+    if not actor or not actor.alive or actor.role != Role.JOKER:
+        return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
+    target = game.get_player_by_id(tid)
+    if not target or not target.alive:
+        return await call.answer("⚠️ Bu o'yinchi mavjud emas.", show_alert=True)
+
+    death_idx = game.night_actions.get("joker_death_card", 0)
+    game.night_actions[Role.JOKER] = tid
+    game.night_acted_uids.add(actor.user_id)
+
+    await call.message.edit_text(
+        f"✅ *Maqsad tanlandi:* {target.display_name}\n\n"
+        f"🎴 O'lim kartasi: *{death_idx + 1}*\n"
+        f"Kartalar ovoz berish bosqachasida yuboriladi."
+    )
+    await call.answer("🤡 Maqsad tanlandi.")
+    if game.all_night_actions_done():
+        asyncio.create_task(_do_night_resolution(call.bot, game))
+
+
+async def _send_joker_cards(bot: Bot, game: Game, chat_id: int):
+    """Send the 4 shuffled cards to the Joker's target at the start of voting."""
+    pending = game.joker_pending
+    if not pending:
+        return
+    target = game.get_player_by_id(pending["target"])
+    if not target or not target.alive:
+        game.joker_pending = None
+        game.joker_card_msg_id = None
+        return
+
+    cards = list(pending["cards"])  # [0, 1, 2, 3] where one is the death index
+    random.shuffle(cards)
+    pending["shuffled"] = cards
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🎴 {i+1}", callback_data=f"jokpick:{i}:{chat_id}")]
+        for i in range(4)
+    ])
+    try:
+        msg = await bot.send_message(
+            target.user_id,
+            "🤡 *Joker sizga 4 ta karta yubordi!*\n\n"
+            "Bitta karta tanlang. Agar o'lim kartasini tanlasangiz — halok bo'lasiz.\n"
+            f"⏳ Ovoz berish tugashiga qadar tanlashingiz kerak!",
+            reply_markup=kb,
+        )
+        game.joker_card_msg_id = msg.message_id
+    except Exception:
+        pass
+
+
+async def _resolve_joker_card(bot: Bot, game: Game, chat_id: int, picked_index: int, auto: bool = False):
+    """Resolve the Joker card pick: kill if death card, otherwise survive."""
+    pending = game.joker_pending
+    if not pending:
+        return
+    target = game.get_player_by_id(pending["target"])
+    if not target or not target.alive:
+        game.joker_pending = None
+        game.joker_card_msg_id = None
+        game.joker_pick = None
+        return
+
+    if auto:
+        is_death = True
+    else:
+        shuffled = pending.get("shuffled", pending["cards"])
+        chosen_card = shuffled[picked_index]
+        is_death = (chosen_card == pending["death_index"])
+    game.joker_pick = picked_index
+
+    if is_death:
+        game.eliminate_player(target.user_id)
+        game.votes.pop(target.user_id, None)  # dead players can't vote
+        joker = game.get_alive_by_role(Role.JOKER) or next(
+            (p for p in game.players.values() if p.role == Role.JOKER), None
+        )
+        if joker:
+            joker.joker_won = True
+        await bot.send_message(
+            chat_id,
+            f"🃏 *Joker xursand!* {target.display_name} o'lim kartasini tanladi."
+        )
+    else:
+        await bot.send_message(
+            chat_id,
+            f"🃏 *Joker xafagarchilikda.* {target.display_name} xavfsiz kartani tanladi va omon qoldi."
+        )
+
+    # Disable the card buttons on the target's message
+    if game.joker_card_msg_id:
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=target.user_id,
+                message_id=game.joker_card_msg_id,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[]),
+            )
+        except Exception:
+            pass
+
+    # Clear temporary data after use
+    game.joker_pending = None
+    game.joker_card_msg_id = None
+
+
+@router.callback_query(F.data.startswith("jokpick:"))
+async def cb_jokpick(call: CallbackQuery, bot: Bot):
+    """The Joker's target picks one of the 4 shuffled cards during voting."""
+    _, idx, cid = call.data.split(":")
+    idx, cid = int(idx), int(cid)
+    game = games.get(cid)
+    if not game or game.phase != Phase.VOTING:
+        return await call.answer("⚠️ Ovoz berish tugagan.", show_alert=True)
+    if not game.joker_pending or call.from_user.id != game.joker_pending.get("target"):
+        return await call.answer("⚠️ Bu kartalar siz uchun emas.", show_alert=True)
+    if game.joker_pick is not None:
+        return await call.answer("⚠️ Siz allaqachon kartani tanladingiz.", show_alert=True)
+    await call.answer("🎴 Karta tanlandi.")
+    await call.message.edit_text("🎴 Karta tanlandi. Natija guruhda e'lon qilinadi.")
+    await _resolve_joker_card(bot, game, cid, idx)
 
 
 @router.callback_query(F.data.startswith("nsot:"))
@@ -2654,12 +2818,12 @@ async def cb_nkonchi(call: CallbackQuery):
         add_diamond(uid, amount)
         result = f"💎 *{amount} olmos* topdingiz!"
         detail = f"Umumiy olmos: {p.diamond + amount} 💎"
-        game.konchi_morning_msg = "⛏️ Konchi tunda oltin topdi."
+        game.konchi_morning_msg = f"⛏️ Konchi tunda {amount} olmos topdi."
     elif typ == "money":
         add_dollar(uid, amount)
         result = f"💵 *{amount}$* topdingiz!"
         detail = f"Umumiy dollar: {p.dollar + amount}$"
-        game.konchi_morning_msg = "⛏️ Konchi tunda temir topdi."
+        game.konchi_morning_msg = f"⛏️ Konchi tunda {amount}$ pul topdi."
     else:
         game.night_actions["konchi_mine"] = True
         p.mines += 1
@@ -2686,11 +2850,11 @@ async def cb_nkonchi(call: CallbackQuery):
         asyncio.create_task(_do_night_resolution(call.bot, game))
 
 
-# ── Qaroqchi night action callbacks (multi-step) ──
+# ── Qaroqchi night action callbacks (single action per night) ──
 
-@router.callback_query(F.data.startswith("qar_mode1:"))
-async def cb_qar_mode1(call: CallbackQuery):
-    """Step 1: Qaroqchi picks action type for 1st action."""
+@router.callback_query(F.data.startswith("qar_mode:"))
+async def cb_qar_mode(call: CallbackQuery):
+    """Qaroqchi selects the action type (steal or attack)."""
     _, mode, cid = call.data.split(":")
     cid = int(cid)
     game = games.get(cid)
@@ -2699,22 +2863,22 @@ async def cb_qar_mode1(call: CallbackQuery):
     actor = game.get_player_by_id(call.from_user.id)
     if not actor or not actor.alive or actor.role != Role.QAROQCHI:
         return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
+    if "qaroqchi_action" in game.night_actions:
+        return await call.answer("⚠️ Siz allaqachon amal tanladingiz.", show_alert=True)
 
-    game.night_actions["qaroqchi_step1_mode"] = mode
+    game.night_actions["qaroqchi_mode"] = mode
     label = "💰 Pul o'g'irlash" if mode == "steal" else "⚔️ Jon olish"
-
-    # Show target list for 1st action
-    kb = _target_kb(game, "qar_t1", actor_id=actor.user_id)
+    kb = _target_kb(game, "qar_t", actor_id=actor.user_id)
     await call.message.edit_text(
-        f"🏴‍☠️ *{label}* — Nishon tanlang (1-amal):",
+        f"🏴‍☠️ *{label}* — Nishon tanlang:",
         reply_markup=kb,
     )
     await call.answer()
 
 
-@router.callback_query(F.data.startswith("qar_t1:"))
-async def cb_qar_t1(call: CallbackQuery):
-    """Step 2: Qaroqchi picks target for 1st action, then shows 2nd action choice."""
+@router.callback_query(F.data.startswith("qar_t:"))
+async def cb_qar_t(call: CallbackQuery):
+    """Qaroqchi selects the target and locks the single action for this night."""
     _, tid, cid = call.data.split(":")
     tid, cid = int(tid), int(cid)
     game = games.get(cid)
@@ -2723,84 +2887,25 @@ async def cb_qar_t1(call: CallbackQuery):
     actor = game.get_player_by_id(call.from_user.id)
     if not actor or not actor.alive or actor.role != Role.QAROQCHI:
         return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
+    if "qaroqchi_action" in game.night_actions:
+        return await call.answer("⚠️ Siz allaqachon amal tanladingiz.", show_alert=True)
     target = game.get_player_by_id(tid)
     if not target or not target.alive:
         return await call.answer("⚠️ Bu o'yinchi mavjud emas.", show_alert=True)
 
-    mode1 = game.night_actions.get("qaroqchi_step1_mode", "steal")
-    game.night_actions["qaroqchi_action1"] = (mode1, tid)
-    label1 = "💰 Pul o'g'irlash" if mode1 == "steal" else "⚔️ Jon olish"
-
-    # Show 2nd action choice
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 Pul o'g'irlash", callback_data=f"qar_mode2:steal:{cid}")],
-        [InlineKeyboardButton(text="⚔️ Jon olish", callback_data=f"qar_mode2:attack:{cid}")],
-    ])
-    await call.message.edit_text(
-        f"✅ 1-amal: *{label1}* → *{target.display_name}*\n\n"
-        f"*2-amal tanlang:*",
-        reply_markup=kb,
-    )
-    await call.answer()
-
-
-@router.callback_query(F.data.startswith("qar_mode2:"))
-async def cb_qar_mode2(call: CallbackQuery):
-    """Step 3: Qaroqchi picks action type for 2nd action."""
-    _, mode, cid = call.data.split(":")
-    cid = int(cid)
-    game = games.get(cid)
-    if not game or game.phase != Phase.NIGHT:
-        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
-    actor = game.get_player_by_id(call.from_user.id)
-    if not actor or not actor.alive or actor.role != Role.QAROQCHI:
-        return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
-
-    game.night_actions["qaroqchi_step2_mode"] = mode
-    label = "💰 Pul o'g'irlash" if mode == "steal" else "⚔️ Jon olish"
-
-    kb = _target_kb(game, "qar_t2", actor_id=actor.user_id)
-    await call.message.edit_text(
-        f"🏴‍☠️ *{label}* — Nishon tanlang (2-amal):",
-        reply_markup=kb,
-    )
-    await call.answer()
-
-
-@router.callback_query(F.data.startswith("qar_t2:"))
-async def cb_qar_t2(call: CallbackQuery):
-    """Step 4: Qaroqchi picks target for 2nd action — done!"""
-    _, tid, cid = call.data.split(":")
-    tid, cid = int(tid), int(cid)
-    game = games.get(cid)
-    if not game or game.phase != Phase.NIGHT:
-        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
-    actor = game.get_player_by_id(call.from_user.id)
-    if not actor or not actor.alive or actor.role != Role.QAROQCHI:
-        return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
-    target = game.get_player_by_id(tid)
-    if not target or not target.alive:
-        return await call.answer("⚠️ Bu o'yinchi mavjud emas.", show_alert=True)
-
-    mode2 = game.night_actions.get("qaroqchi_step2_mode", "steal")
-    game.night_actions["qaroqchi_action2"] = (mode2, tid)
+    mode = game.night_actions.get("qaroqchi_mode", "steal")
+    game.night_actions["qaroqchi_action"] = (mode, tid)
     game.night_actions[Role.QAROQCHI] = True
-    game.night_actions[actor.user_id] = True   # Also store uid for all_night_actions_done
+    game.night_actions[actor.user_id] = True
     game.night_acted_uids.add(call.from_user.id)
 
-    a1 = game.night_actions.get("qaroqchi_action1")
-    label1 = "💰 Pul o'g'irlash" if a1 and a1[0] == "steal" else "⚔️ Jon olish"
-    t1 = game.get_player_by_id(a1[1]) if a1 else None
-    label2 = "💰 Pul o'g'irlash" if mode2 == "steal" else "⚔️ Jon olish"
-
+    label = "💰 Pul o'g'irlash" if mode == "steal" else "⚔️ Jon olish"
     await call.message.edit_text(
-        f"✅ *Qaroqchi amallar tanlandi!*\n\n"
-        f"1-amal: *{label1}* → *{t1.display_name if t1 else '?'}*\n"
-        f"2-amal: *{label2}* → *{target.display_name}*\n\n"
-        f"Natija ertalab ma'lum bo'ladi."
+        f"✅ *Qaroqchi amali tanlandi!*\n\n"
+        f"*{label}* → *{target.display_name}*\n\n"
+        f"Bu kecha boshqa amal tanlay olmaysiz. Natija ertalab ma'lum bo'ladi."
     )
-    await call.answer("✅ Ikki amal tanlandi!")
-
+    await call.answer("✅ Amal tanlandi!")
     if game.all_night_actions_done():
         asyncio.create_task(_do_night_resolution(call.bot, game))
 

@@ -83,13 +83,13 @@ ROLE_DESCRIPTIONS_UZ = {
     Role.AFERIST: "Har tun biror o'yinchining kunduzgi ovoz berish shaxsini almashtiradi.",
     Role.SEHRGAR: "Don, Qotil yoki Komissar sizni o'ldirmoqchi bo'lsa — urinish behuda. Rahm qilish yoki o'ldirish tanlovingiz bor.\n⚠️ Kunduz osisangiz yoki Afsungar/G'azabkor o'ldirsa — o'lasiz.",
     Role.GAZABKOR: "Har tun 1 ta o'yinchini tanlaysiz. Kamida *3 kishini* tanlab, o'zingizni tanlasangiz — *g'alaba qozonasiz!*",
-    Role.JOKER: "Har tun biror o'yinchiga 4 ta karta yuborasiz — biri o'lim kartasi (25% ehtimol). O'lsa — siz g'alaba qozonasiz!",
+    Role.JOKER: "Har tun biror o'yinchiga 4 ta karta yuborasiz — avval o'lim kartasini tanlaysiz. Maqsad ovoz berish boshlanganda kartalarni tanlaydi. O'lsa — siz g'alaba qozonasiz!",
     Role.KIMYOGAR: "Har tun biror o'yinchini *davolashingiz* yoki *o'ldirishingiz* mumkin. Tirik qolsangiz g'alaba!",
     Role.MINIOR: "Har tun tanlagan o'yinchingizning eshigi oldiga *mina* qo'yasiz. O'sha kechasi kelgan barcha o'yinchilar halok bo'ladi.",
     Role.KONCHI: "Har tun 1 ta raqam tanlaysiz: 💎 olmos, 💵 pul yoki 💣 mina topishingiz mumkin. Minaga tushsangiz — halok bo'lasiz!",
     Role.TULKI: "Har tun 1 o'yinchini tanlaysiz. Tinch aholi bo'lsa → *Serjant*ga, Mafiya bo'lsa → *Mafiya*ga, mustaqil bo'lsa → *Qotil*ga aylanasiz!",
     Role.LABARANT: "Mafiya tomonida o'ynaysiz, lekin Mafiya sizni tanimaydi! Har tun birini tanlaysiz: Mafiya a'zosi bo'lsa — himoya qilasiz, tinch aholi yoki mustaqil bo'lsa — o'ldirasiz.\n⚠️ Mafiya sizni otsa — omon qolasiz, lekin Komissar yoki Kimyogar otsa — o'lasiz.",
-    Role.QAROQCHI: "Erkin rol! Har kecha *2 ta amal* tanlaysiz:\n💰 *Pul o'g'irlash* — O'yinchidan 50–100$ o'g'irlaysiz. Puli kam bo'lsa, uning 50% joni ketadi.\n⚔️ *Jon olish* — O'yinchining 50% joni ketadi. Jon 0% ga tushsa o'ladi.",
+    Role.QAROQCHI: "Erkin rol! Har kecha faqat *1 ta amal* tanlaysiz:\n💰 *Pul o'g'irlash* — O'yinchidan 50–100$ o'g'irlaysiz. Puli kam bo'lsa, uning 50% joni ketadi.\n⚔️ *Jon olish* — O'yinchining 50% joni ketadi. Jon 0% ga tushsa o'ladi.",
 }
 
 MIN_PLAYERS = 4
@@ -195,6 +195,10 @@ class Game:
     money_drops: dict = field(default_factory=dict)
     lobby_msg_id: Optional[int] = None
     komissar_investigations: dict = field(default_factory=dict)
+    # Joker card game (set during night, resolved during voting)
+    joker_pending: Optional[dict] = None  # {cards: list, target: uid, death_index: int, shuffled: list}
+    joker_card_msg_id: Optional[int] = None  # message id sent to target during voting
+    joker_pick: Optional[int] = None  # card index chosen by target, or None if not chosen
     # AFK tracking
     afk_counters: dict = field(default_factory=dict)       # user_id -> consecutive missed nights
     night_acted_uids: set = field(default_factory=set)     # who submitted this night
@@ -283,7 +287,8 @@ class Game:
         counts: dict = {}
         for vid, tid in self.votes.items():
             voter = self.players.get(vid)
-            if voter and voter.alive:
+            target = self.players.get(tid)
+            if voter and voter.alive and target and target.alive:
                 counts[tid] = counts.get(tid, 0) + 1
         if not counts:
             return None

@@ -156,48 +156,45 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     if labarant and pending.get(labarant.user_id) == "mafia":
         pending.pop(labarant.user_id)
 
-    # 6c. Qaroqchi — steals money or deals HP damage (independent role)
+    # 6c. Qaroqchi — steals money or deals HP damage (one action per night)
     qaroqchi = game.get_alive_by_role(Role.QAROQCHI)
     if qaroqchi and not blocked(qaroqchi.user_id):
-        for action_key in ["qaroqchi_action1", "qaroqchi_action2"]:
-            action = actions.get(action_key)
-            if not action:
-                continue
+        action = actions.get("qaroqchi_action")
+        if action:
             mode, tid = action
             target = alive.get(tid)
-            if not target:
-                continue
-            if mode == "steal":
-                amount = random.randint(50, 100)
-                tp = get_profile(tid)
-                if tp.dollar >= amount:
-                    tp.dollar -= amount
-                    save_profile(tp)
-                    qp = get_profile(qaroqchi.user_id)
-                    if not qp.infinite_dollar:
-                        qp.dollar += amount
-                    save_profile(qp)
-                    await _dm(bot, qaroqchi.user_id,
-                        f"💰 *{target.display_name}*dan *{amount}$* o'g'irladingiz!")
-                    await _dm(bot, tid,
-                        f"💸 Kimdir kechasi *{amount}$* o'g'irladi! Hisobingiz kamaydi.")
-                else:
-                    # Not enough money — deal 50 HP damage instead
+            if target:
+                if mode == "steal":
+                    amount = random.randint(50, 100)
+                    tp = get_profile(tid)
+                    if tp.dollar >= amount:
+                        tp.dollar -= amount
+                        save_profile(tp)
+                        qp = get_profile(qaroqchi.user_id)
+                        if not qp.infinite_dollar:
+                            qp.dollar += amount
+                        save_profile(qp)
+                        await _dm(bot, qaroqchi.user_id,
+                            f"💰 *{target.display_name}*dan *{amount}$* o'g'irladingiz!")
+                        await _dm(bot, tid,
+                            f"💸 Kimdir kechasi *{amount}$* o'g'irladi! Hisobingiz kamaydi.")
+                    else:
+                        # Not enough money — deal 50 HP damage instead
+                        target.hp = max(0, target.hp - 50)
+                        await _dm(bot, qaroqchi.user_id,
+                            f"💸 *{target.display_name}*da yetarli pul yo'q — uning joni 50% kamaydi.")
+                        await _dm(bot, tid,
+                            f"🗡️ Kimdir kechasi sizga hujum qildi — joniningiz 50% kamaydi! (Qolgan: {target.hp}%)")
+                        if target.hp <= 0 and tid not in pending:
+                            pending[tid] = "qaroqchi_hp"
+                elif mode == "attack":
                     target.hp = max(0, target.hp - 50)
                     await _dm(bot, qaroqchi.user_id,
-                        f"💸 *{target.display_name}*da yetarli pul yo'q — uning joni 50% kamaydi.")
+                        f"⚔️ *{target.display_name}*ga hujum qildingiz! Joni {target.hp}% qoldi.")
                     await _dm(bot, tid,
-                        f"🗡️ Kimdir kechasi sizga hujum qildi — joniningiz 50% kamaydi! (Qolgan: {target.hp}%)")
+                        f"🗡️ Kechasi birov sizga hujum qildi — joniningiz 50% kamaydi! (Qolgan: {target.hp}%)")
                     if target.hp <= 0 and tid not in pending:
                         pending[tid] = "qaroqchi_hp"
-            elif mode == "attack":
-                target.hp = max(0, target.hp - 50)
-                await _dm(bot, qaroqchi.user_id,
-                    f"⚔️ *{target.display_name}*ga hujum qildingiz! Joni {target.hp}% qoldi.")
-                await _dm(bot, tid,
-                    f"🗡️ Kechasi birov sizga hujum qildi — joniningiz 50% kamaydi! (Qolgan: {target.hp}%)")
-                if target.hp <= 0 and tid not in pending:
-                    pending[tid] = "qaroqchi_hp"
 
     # 6d. Enforce HP invariant: any alive player at 0 HP must die (regardless of pending state)
     for p in list(alive.values()):
@@ -453,18 +450,18 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
             em = ROLE_EMOJIS.get(sp.role, "")
             events.append(f"🤓 *Maxfiy manba:* *{sp.display_name}* — {em} *{rn}* ekan!")
 
-    # 24. Joker
+    # 24. Joker — store the card game for the voting phase; do NOT kill here.
     joker = game.get_alive_by_role(Role.JOKER)
     joker_t = actions.get(Role.JOKER)
+    joker_death_card = actions.get("joker_death_card", 0)
     if joker and joker_t and joker_t in alive and not blocked(joker.user_id):
-        if random.random() < 0.25:
-            tp = alive[joker_t]
-            if tp.alive:
-                game.eliminate_player(joker_t)
-                rn = _role_name(tp.role)
-                em = ROLE_EMOJIS.get(tp.role, "")
-                events.append(f"🤡 *{tp.display_name}* Joker kartasidan o'lim kartasini tanladi! Roli: {em} {rn}")
-                joker.joker_won = True
+        game.joker_pending = {
+            "cards": [0, 1, 2, 3],
+            "target": joker_t,
+            "death_index": joker_death_card,
+            "shuffled": None,
+        }
+        # No immediate kill; the target will receive the cards when voting starts.
 
     # 25. G'azabkor
     gazabkor = game.get_alive_by_role(Role.GAZABKOR)
