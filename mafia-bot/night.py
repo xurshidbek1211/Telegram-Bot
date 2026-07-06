@@ -207,7 +207,7 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
     # 7. Komissar investigation
     komissar = game.get_alive_by_role(Role.KOMISSAR)
     serzhant = game.get_alive_by_role(Role.SERZHANT)
-    active_k = komissar or (serzhant if not komissar else None)
+    active_k = komissar or serzhant
     komissar_result = ""
     komissar_found_mafia_name = None
     komissar_mode = actions.get("komissar_mode", "check")

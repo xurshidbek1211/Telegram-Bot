@@ -588,7 +588,8 @@ async def _send_night_actions(bot: Bot, game: Game):
         uid  = player.user_id
 
         if role == Role.DON:
-            targets = [p for p in alive if p.role not in MAFIA_TEAM]
+            # LABARANT is in MAFIA_TEAM but Mafia doesn't know — keep them targetable
+            targets = [p for p in alive if p.role not in MAFIA_TEAM or p.role == Role.LABARANT]
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=p.display_name, callback_data=f"nk:{p.user_id}:{chat_id}")]
                 for p in targets
@@ -600,33 +601,41 @@ async def _send_night_actions(bot: Bot, game: Game):
                 f"🤵🏻 *Don:* o'ldirish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.MAFIA:
-            targets = [p for p in alive if p.role not in MAFIA_TEAM]
+            # LABARANT is in MAFIA_TEAM but Mafia doesn't know — keep them targetable
+            targets = [p for p in alive if p.role not in MAFIA_TEAM or p.role == Role.LABARANT]
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=p.display_name, callback_data=f"nk:{p.user_id}:{chat_id}")]
                 for p in targets
             ])
             don = game.get_alive_by_role(Role.DON)
             leader = f"Don: {don.display_name}" if don else "Siz lider"
-            allies = [p.display_name for p in alive if p.role in MAFIA_TEAM and p.user_id != uid]
+            # Exclude LABARANT from visible allies — Mafia doesn't know about them
+            allies = [p.display_name for p in alive if p.role in MAFIA_TEAM
+                      and p.role != Role.LABARANT and p.user_id != uid]
             ally_txt = f"\n🤝 Jamoa: {', '.join(allies)}" if allies else ""
             await _dm(bot, uid,
                 f"🌙 *{game.day_number}-kecha*\n_{leader}_{ally_txt}\n\n"
                 f"🤵🏼 Nishon tanlang ({secs}s):", kb)
 
         elif role == Role.YOLLANMA_QOTIL:
-            targets = [p for p in alive if p.role not in MAFIA_TEAM]
+            # LABARANT is in MAFIA_TEAM but YQ doesn't know — keep them targetable
+            targets = [p for p in alive if p.role not in MAFIA_TEAM or p.role == Role.LABARANT]
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=p.display_name, callback_data=f"nyq:{p.user_id}:{chat_id}")]
                 for p in targets
             ])
-            allies = [p.display_name for p in alive if p.role in MAFIA_TEAM]
+            # Exclude LABARANT from visible allies — YQ doesn't know about them
+            allies = [p.display_name for p in alive if p.role in MAFIA_TEAM
+                      and p.role != Role.LABARANT]
             ally_txt = f"\n🤝 Mafiya jamoasi: {', '.join(allies)}" if allies else ""
             await _dm(bot, uid,
                 f"🌙 *{game.day_number}-kecha*{ally_txt}\n\n"
                 f"🥷 Nishon tanlang — ⚠️ Komissarni tanlasangiz, u sizni o'ldiradi! ({secs}s):", kb)
 
         elif role == Role.ADVOKAT:
-            targets = [p for p in alive if p.role in MAFIA_TEAM and p.user_id != uid]
+            # Advokat protects known Mafia members — Labarant is secret, exclude them
+            targets = [p for p in alive if p.role in MAFIA_TEAM
+                       and p.role != Role.LABARANT and p.user_id != uid]
             if not targets:
                 game.night_actions[Role.ADVOKAT] = uid
                 game.night_acted_uids.add(uid)  # auto-skip counts as acted (no AFK penalty)
@@ -644,7 +653,8 @@ async def _send_night_actions(bot: Bot, game: Game):
 
         elif role == Role.JURNALIST:
             kb = _target_kb(game, "njurn", actor_id=uid)
-            allies = [p.display_name for p in alive if p.role in MAFIA_TEAM]
+            # LABARANT is in MAFIA_TEAM but is a secret member; don't reveal them
+            allies = [p.display_name for p in alive if p.role in MAFIA_TEAM and p.role != Role.LABARANT]
             ally_txt = f"\n🤝 Mafiya jamoasi: {', '.join(allies)}" if allies else ""
             await _dm(bot, uid,
                 f"🌙 *{game.day_number}-kecha*{ally_txt}\n\n"
@@ -940,20 +950,29 @@ async def cmd_rules(msg: Message):
 
 @router.message(Command("roles"))
 async def cmd_roles(msg: Message):
+    # Auto-generated from role registry — adding a new Role + its entries in
+    # ROLE_EMOJIS, ROLE_DESCRIPTIONS_UZ, MAFIA_TEAM / CITIZEN_TEAM is enough
+    # to make it appear here automatically.
+    all_described = [r for r in ROLE_DESCRIPTIONS_UZ]  # preserves insertion order
+
+    mafia_roles   = [r for r in all_described if r in MAFIA_TEAM]
+    citizen_roles = [r for r in all_described if r in CITIZEN_TEAM]
+    neutral_roles = [r for r in all_described if r not in MAFIA_TEAM and r not in CITIZEN_TEAM]
+
     teams = {
-        "🔴 *Mafiya jamoasi:*": [Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.LABARANT],
-        "🔵 *Fuqarolar jamoasi:*": [Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT,
-                                    Role.DAYDI, Role.KEZUVCHI, Role.ADMIRAL, Role.SOTQIN,
-                                    Role.KONCHI],
-        "⚪ *Mustaqil rollar:*": [Role.QOTIL, Role.BO_RI, Role.AFSUNGAR, Role.AFERIST,
-                                  Role.SEHRGAR, Role.GAZABKOR, Role.JOKER, Role.KIMYOGAR,
-                                  Role.MINIOR, Role.TULKI, Role.QAROQCHI],
+        "🔴 *Mafiya jamoasi:*": mafia_roles,
+        "🔵 *Fuqarolar jamoasi:*": citizen_roles,
+        "⚪ *Mustaqil rollar:*": neutral_roles,
     }
     for label, roles in teams.items():
+        if not roles:
+            continue
         lines = [label]
         for r in roles:
-            desc_short = ROLE_DESCRIPTIONS_UZ[r].split("\n")[0]
-            lines.append(f"{ROLE_EMOJIS[r]} *{ROLE_NAMES_UZ[r]}* — _{desc_short}_")
+            em   = ROLE_EMOJIS.get(r, "")
+            name = ROLE_NAMES_UZ.get(r, r.value)
+            desc = ROLE_DESCRIPTIONS_UZ[r].split("\n")[0]
+            lines.append(f"{em} *{name}* — _{desc}_")
         await msg.answer("\n".join(lines))
 
 
@@ -1518,14 +1537,25 @@ async def _launch_game(msg: Message, bot: Bot):
             [InlineKeyboardButton(text="👥 Guruhga qaytish", url=game.group_link)]
         ])
 
-    mafia_names = ", ".join(
-        p.display_name for p in game.players.values() if p.role in MAFIA_TEAM
-    )
+    # LABARANT is in MAFIA_TEAM but is a secret member; only reveal visible mafia members
+    def _visible_mafia_names(exclude_self_id=None):
+        return ", ".join(
+            p.display_name for p in game.players.values()
+            if p.role in MAFIA_TEAM and p.role != Role.LABARANT
+               and (exclude_self_id is None or p.user_id != exclude_self_id)
+        )
+
     for player in game.players.values():
         em   = ROLE_EMOJIS[player.role]
         name = ROLE_NAMES_UZ[player.role]
         desc = ROLE_DESCRIPTIONS_UZ[player.role]
-        extra = f"\n\n🤝 *Mafiya jamoangiz:* {mafia_names}" if player.role in MAFIA_TEAM else ""
+        # Labarant acts alone; other mafia see only the visible mafia team
+        if player.role == Role.LABARANT:
+            extra = ""
+        elif player.role in MAFIA_TEAM:
+            extra = f"\n\n🤝 *Mafiya jamoangiz:* {_visible_mafia_names(exclude_self_id=player.user_id)}"
+        else:
+            extra = ""
         await _dm(bot, player.user_id,
             f"🎭 *Sizning rolingiz: {em} {name}*\n\n{desc}{extra}\n\nO'yin boshlandi!", group_kb)
 

@@ -45,9 +45,9 @@ class Phase(Enum):
     ENDED = "ended"
 
 
-MAFIA_TEAM = {Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST}
+MAFIA_TEAM = {Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.LABARANT}
 CITIZEN_TEAM = {Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.CITIZEN,
-                Role.DAYDI, Role.KEZUVCHI, Role.OMADLI, Role.ADMIRAL, Role.SOTQIN}
+                Role.DAYDI, Role.KEZUVCHI, Role.OMADLI, Role.ADMIRAL, Role.SOTQIN, Role.KONCHI}
 
 ROLE_EMOJIS = {
     Role.DON: "🤵🏻", Role.MAFIA: "🤵🏼", Role.YOLLANMA_QOTIL: "🥷",
