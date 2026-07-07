@@ -1,8 +1,8 @@
 import json
-import os
 from dataclasses import dataclass, asdict, field
+from database import get_pool
 
-SETTINGS_FILE = os.path.join(os.path.dirname(__file__), "chat_settings.json")
+_cache: dict[int, "ChatSettings"] = {}
 
 
 @dataclass
@@ -17,49 +17,50 @@ class ChatSettings:
     hang_confirm_enabled: bool = True
     hang_confirm_secs: int = 30
     custom_role_configs: dict = field(default_factory=dict)
-    auto_delete_dead: bool = False  # O'lik va tomoshabinlar xabarlarini o'chirish
+    auto_delete_dead: bool = False
+    night_atmosphere: bool = True
 
 
-_cache: dict[int, ChatSettings] = {}
-_loaded = False
+def _from_dict(chat_id: int, d: dict) -> "ChatSettings":
+    known = {f for f in ChatSettings.__dataclass_fields__}
+    filtered = {k: v for k, v in d.items() if k in known}
+    filtered["chat_id"] = chat_id
+    return ChatSettings(**filtered)
 
 
-def _load_all() -> dict[int, ChatSettings]:
-    if not os.path.exists(SETTINGS_FILE):
-        return {}
-    try:
-        with open(SETTINGS_FILE, "r") as f:
-            raw = json.load(f)
-        known = {f.name for f in ChatSettings.__dataclass_fields__.values()}
-        result = {}
-        for k, v in raw.items():
-            filtered = {key: val for key, val in v.items() if key in known}
-            result[int(k)] = ChatSettings(**filtered)
-        return result
-    except Exception:
-        return {}
+async def get_settings(chat_id: int) -> ChatSettings:
+    if chat_id in _cache:
+        return _cache[chat_id]
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT settings FROM chat_settings WHERE chat_id = $1", chat_id
+        )
+
+    if row:
+        raw = row["settings"]
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        s = _from_dict(chat_id, raw)
+    else:
+        s = ChatSettings(chat_id=chat_id)
+
+    _cache[chat_id] = s
+    return s
 
 
-def _save_all():
-    with open(SETTINGS_FILE, "w") as f:
-        json.dump({str(k): asdict(v) for k, v in _cache.items()}, f, indent=2)
-
-
-def _init():
-    global _cache, _loaded
-    if not _loaded:
-        _cache = _load_all()
-        _loaded = True
-
-
-def get_settings(chat_id: int) -> ChatSettings:
-    _init()
-    if chat_id not in _cache:
-        _cache[chat_id] = ChatSettings(chat_id=chat_id)
-    return _cache[chat_id]
-
-
-def save_settings(settings: ChatSettings):
-    _init()
+async def save_settings(settings: ChatSettings):
     _cache[settings.chat_id] = settings
-    _save_all()
+    d = asdict(settings)
+    d.pop("chat_id", None)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO chat_settings (chat_id, settings)
+            VALUES ($1, $2::jsonb)
+            ON CONFLICT (chat_id) DO UPDATE SET settings = EXCLUDED.settings
+            """,
+            settings.chat_id, json.dumps(d),
+        )

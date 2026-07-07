@@ -1,10 +1,17 @@
 import json
 import os
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, field
 
-PROFILES_FILE = os.path.join(os.path.dirname(__file__), "profiles.json")
+from database import get_pool
 
 OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
+
+_FIELDS = [
+    "user_id", "first_name", "dollar", "diamond", "wins", "games",
+    "infinite_diamond", "infinite_dollar", "shield", "documents",
+    "hang_protect", "killer_protect", "gun", "drug_protect", "mask",
+    "slip_protect", "hero_protect", "mines", "active_roles",
+]
 
 
 @dataclass
@@ -33,129 +40,179 @@ class Profile:
 _cache: dict[int, Profile] = {}
 
 
-def _load_all() -> dict[int, Profile]:
-    if not os.path.exists(PROFILES_FILE):
-        return {}
-    try:
-        with open(PROFILES_FILE, "r") as f:
-            raw = json.load(f)
-        profiles = {}
-        known = {f.name for f in Profile.__dataclass_fields__.values()}
-        for k, v in raw.items():
-            filtered = {key: val for key, val in v.items() if key in known}
-            profiles[int(k)] = Profile(**filtered)
-        return profiles
-    except Exception:
-        return {}
+def _row_to_profile(row) -> Profile:
+    d = dict(row)
+    ar = d.get("active_roles", [])
+    if isinstance(ar, str):
+        ar = json.loads(ar)
+    return Profile(
+        user_id=d["user_id"],
+        first_name=d.get("first_name", ""),
+        dollar=d.get("dollar", 0),
+        diamond=d.get("diamond", 0),
+        wins=d.get("wins", 0),
+        games=d.get("games", 0),
+        infinite_diamond=bool(d.get("infinite_diamond", False)),
+        infinite_dollar=bool(d.get("infinite_dollar", False)),
+        shield=d.get("shield", 0),
+        documents=d.get("documents", 0),
+        hang_protect=d.get("hang_protect", 0),
+        killer_protect=d.get("killer_protect", 0),
+        gun=d.get("gun", 0),
+        drug_protect=d.get("drug_protect", 0),
+        mask=d.get("mask", 0),
+        slip_protect=d.get("slip_protect", 0),
+        hero_protect=d.get("hero_protect", 0),
+        mines=d.get("mines", 0),
+        active_roles=ar or [],
+    )
 
 
-def _save_all():
-    with open(PROFILES_FILE, "w") as f:
-        json.dump({str(k): asdict(v) for k, v in _cache.items()}, f, indent=2)
+def _apply_owner(p: Profile) -> Profile:
+    if OWNER_ID and p.user_id == OWNER_ID:
+        p.infinite_diamond = True
+        p.infinite_dollar = True
+    return p
 
 
-def _init_cache():
-    global _cache
-    if not _cache:
-        _cache = _load_all()
-    if OWNER_ID:
-        if OWNER_ID not in _cache:
-            _cache[OWNER_ID] = Profile(
-                user_id=OWNER_ID,
-                infinite_diamond=True,
-                infinite_dollar=True,
-            )
-        else:
-            _cache[OWNER_ID].infinite_diamond = True
-            _cache[OWNER_ID].infinite_dollar = True
+async def get_profile(user_id: int, first_name: str = "") -> Profile:
+    if user_id in _cache:
+        p = _cache[user_id]
+        if first_name:
+            p.first_name = first_name
+        return _apply_owner(p)
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT * FROM profiles WHERE user_id = $1", user_id
+        )
+    if row:
+        p = _row_to_profile(row)
+        if first_name:
+            p.first_name = first_name
+    else:
+        p = Profile(user_id=user_id, first_name=first_name)
+
+    _apply_owner(p)
+    _cache[user_id] = p
+    return p
 
 
-def get_profile(user_id: int, first_name: str = "") -> Profile:
-    _init_cache()
-    if user_id not in _cache:
-        _cache[user_id] = Profile(user_id=user_id, first_name=first_name)
-    elif first_name:
-        _cache[user_id].first_name = first_name
-    return _cache[user_id]
-
-
-def save_profile(profile: Profile):
-    _init_cache()
+async def save_profile(profile: Profile):
+    _apply_owner(profile)
     _cache[profile.user_id] = profile
-    _save_all()
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            INSERT INTO profiles (
+                user_id, first_name, dollar, diamond, wins, games,
+                infinite_diamond, infinite_dollar, shield, documents,
+                hang_protect, killer_protect, gun, drug_protect, mask,
+                slip_protect, hero_protect, mines, active_roles
+            ) VALUES (
+                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+            )
+            ON CONFLICT (user_id) DO UPDATE SET
+                first_name = EXCLUDED.first_name,
+                dollar = EXCLUDED.dollar,
+                diamond = EXCLUDED.diamond,
+                wins = EXCLUDED.wins,
+                games = EXCLUDED.games,
+                infinite_diamond = EXCLUDED.infinite_diamond,
+                infinite_dollar = EXCLUDED.infinite_dollar,
+                shield = EXCLUDED.shield,
+                documents = EXCLUDED.documents,
+                hang_protect = EXCLUDED.hang_protect,
+                killer_protect = EXCLUDED.killer_protect,
+                gun = EXCLUDED.gun,
+                drug_protect = EXCLUDED.drug_protect,
+                mask = EXCLUDED.mask,
+                slip_protect = EXCLUDED.slip_protect,
+                hero_protect = EXCLUDED.hero_protect,
+                mines = EXCLUDED.mines,
+                active_roles = EXCLUDED.active_roles
+            """,
+            profile.user_id, profile.first_name, profile.dollar, profile.diamond,
+            profile.wins, profile.games, profile.infinite_diamond, profile.infinite_dollar,
+            profile.shield, profile.documents, profile.hang_protect, profile.killer_protect,
+            profile.gun, profile.drug_protect, profile.mask, profile.slip_protect,
+            profile.hero_protect, profile.mines, json.dumps(profile.active_roles),
+        )
 
 
-def add_dollar(user_id: int, amount: int):
-    p = get_profile(user_id)
+async def add_dollar(user_id: int, amount: int):
+    p = await get_profile(user_id)
     if not p.infinite_dollar:
         p.dollar += amount
-        save_profile(p)
+        await save_profile(p)
 
 
-def spend_dollar(user_id: int, amount: int) -> bool:
-    p = get_profile(user_id)
+async def spend_dollar(user_id: int, amount: int) -> bool:
+    p = await get_profile(user_id)
     if p.infinite_dollar:
         return True
     if p.dollar < amount:
         return False
     p.dollar -= amount
-    save_profile(p)
+    await save_profile(p)
     return True
 
 
-def add_diamond(user_id: int, amount: int):
-    p = get_profile(user_id)
+async def add_diamond(user_id: int, amount: int):
+    p = await get_profile(user_id)
     if not p.infinite_diamond:
         p.diamond += amount
-        save_profile(p)
+        await save_profile(p)
 
 
-def spend_diamond(user_id: int, amount: int) -> bool:
-    p = get_profile(user_id)
+async def spend_diamond(user_id: int, amount: int) -> bool:
+    p = await get_profile(user_id)
     if p.infinite_diamond:
         return True
     if p.diamond < amount:
         return False
     p.diamond -= amount
-    save_profile(p)
+    await save_profile(p)
     return True
 
 
-def transfer_diamond(giver_id: int, target_id: int, amount: int) -> bool:
-    giver = get_profile(giver_id)
-    target = get_profile(target_id)
+async def transfer_diamond(giver_id: int, target_id: int, amount: int) -> bool:
+    giver = await get_profile(giver_id)
+    target = await get_profile(target_id)
     if not giver.infinite_diamond and giver.diamond < amount:
         return False
     if not giver.infinite_diamond:
         giver.diamond -= amount
     target.diamond += amount
-    save_profile(giver)
-    save_profile(target)
+    await save_profile(giver)
+    await save_profile(target)
     return True
 
 
-def transfer_dollar(giver_id: int, target_id: int, amount: int) -> bool:
-    giver = get_profile(giver_id)
-    target = get_profile(target_id)
+async def transfer_dollar(giver_id: int, target_id: int, amount: int) -> bool:
+    giver = await get_profile(giver_id)
+    target = await get_profile(target_id)
     if not giver.infinite_dollar and giver.dollar < amount:
         return False
     if not giver.infinite_dollar:
         giver.dollar -= amount
     target.dollar += amount
-    save_profile(giver)
-    save_profile(target)
+    await save_profile(giver)
+    await save_profile(target)
     return True
 
 
-def record_game_start(user_id: int, first_name: str = ""):
-    p = get_profile(user_id, first_name)
+async def record_game_start(user_id: int, first_name: str = ""):
+    p = await get_profile(user_id, first_name)
     p.games += 1
-    save_profile(p)
+    await save_profile(p)
 
 
-def record_win(user_id: int, dollar_reward: int = 40):
-    p = get_profile(user_id)
+async def record_win(user_id: int, dollar_reward: int = 40):
+    p = await get_profile(user_id)
     p.wins += 1
     if not p.infinite_dollar:
         p.dollar += dollar_reward
-    save_profile(p)
+    await save_profile(p)

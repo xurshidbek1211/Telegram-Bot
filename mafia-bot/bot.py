@@ -6,6 +6,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 from handlers import router
+from database import init_db, close_db
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -15,14 +16,6 @@ logging.getLogger("aiogram").setLevel(logging.WARNING)
 
 
 async def _run_health_server(port: int):
-    """Bind a minimal HTTP server on PORT.
-
-    Hosting platforms such as Render run apps as "web services" and only
-    consider a deploy healthy once something is listening on the port they
-    assign (via the PORT env var) and answers HTTP health checks. The bot
-    itself keeps talking to Telegram via long polling — this server has no
-    other purpose than satisfying that health check.
-    """
     from aiohttp import web
 
     async def health(_request):
@@ -44,18 +37,16 @@ async def main():
     if not token:
         raise RuntimeError("TELEGRAM_BOT_TOKEN o'rnatilmagan.")
 
+    await init_db()
+
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
     dp = Dispatcher()
     dp.include_router(router)
 
-    # Render (and similar platforms) set PORT automatically for web services.
-    # Locally / on Replit PORT is not set, so we just poll as before.
     port = os.environ.get("PORT")
     if port:
         await _run_health_server(int(port))
 
-    # Make sure no leftover webhook is registered — start_polling silently
-    # receives nothing if Telegram still thinks a webhook is active.
     await bot.delete_webhook(drop_pending_updates=True)
 
     await bot.set_my_commands([
@@ -69,15 +60,19 @@ async def main():
         BotCommand(command="give", description="💎 Olmos tashlash (guruhda)"),
         BotCommand(command="money", description="💵 Pul tashlash (guruhda)"),
         BotCommand(command="shop", description="🛒 Do'kon"),
+        BotCommand(command="top", description="🏆 Reyting"),
         BotCommand(command="stats", description="📊 Statistika"),
-        BotCommand(command="settings", description="⚙️ Sozlamalar"),
+        BotCommand(command="sozlash", description="⚙️ Sozlamalar"),
         BotCommand(command="kanal", description="📢 Reklama kanalini sozlash (egasi)"),
         BotCommand(command="utag", description="📢 Guruh a'zolarini o'yinga chaqirish"),
         BotCommand(command="help", description="❓ Yordam"),
     ])
 
     logging.info("Mafiya boti ishga tushmoqda...")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await close_db()
 
 
 if __name__ == "__main__":

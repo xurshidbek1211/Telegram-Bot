@@ -187,7 +187,7 @@ class Game:
     konchi_morning_msg: Optional[str] = None   # Konchi tunda nima topgani
     hang_confirm_votes: dict = field(default_factory=dict)
     hang_confirm_msg_id: Optional[int] = None
-    komissar_found_mafia: Optional[str] = None
+    komissar_found_mafia: Optional[dict] = None
     phase_task: Any = None
     group_link: Optional[str] = None
     vote_msg_id: Optional[int] = None

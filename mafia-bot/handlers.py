@@ -218,7 +218,7 @@ async def run_night(bot: Bot, chat_id: int):
     if not game:
         return
 
-    settings = get_settings(chat_id)
+    settings = await get_settings(chat_id)
     game.reset_night_state()
     game.phase = Phase.NIGHT
     _auto_passive(game)
@@ -251,10 +251,20 @@ async def _wait_for_night_done(game: Game):
         await asyncio.sleep(1)
 
 
+async def _atmosphere(bot: Bot, chat_id: int, text: str):
+    try:
+        settings = await get_settings(chat_id)
+        if not settings.night_atmosphere:
+            return
+        await bot.send_message(chat_id, f"🌙 _{text}_", parse_mode="Markdown")
+    except Exception:
+        pass
+
+
 async def _do_night_resolution(bot: Bot, game: Game):
     if game.phase != Phase.NIGHT:
         return
-    settings = get_settings(game.chat_id)
+    settings = await get_settings(game.chat_id)
     events = await resolve_night(game, bot)
 
     # ── AFK check ──
@@ -299,10 +309,16 @@ async def _do_night_resolution(bot: Bot, game: Game):
     game.komissar_found_mafia = None
 
     if found_mafia:
+        mention = f"@{found_mafia['username']}" if found_mafia.get('username') else found_mafia['name']
+        role_em = found_mafia['role_emoji']
+        role_nm = found_mafia['role_name']
         await bot.send_message(
             game.chat_id,
             f"🌙 *{game.day_number}-kecha yakunlandi:*\n\n{summary}\n\n"
-            f"🕵🏼 *Komissar {found_mafia} mafiyani topdi!*\n\n"
+            f"🚨 *Komissar Mafiya jamoasi a'zosini fosh qildi!*\n\n"
+            f"👤 O'yinchi: {escape_md(mention)}\n"
+            f"🎭 Rol: {role_em} *{role_nm}*\n\n"
+            "⚖️ Bugungi ovoz berishda ushbu o'yinchi sud qilinadi!\n\n"
             "☀️ Darhol ovoz berish boshlanadi!\n\n"
             f"{_day_status_block(game)}",
         )
@@ -327,7 +343,7 @@ async def run_vote(bot: Bot, chat_id: int):
     if not game or game.phase == Phase.ENDED:
         return
 
-    settings = get_settings(chat_id)
+    settings = await get_settings(chat_id)
     game.phase = Phase.VOTING
     game.votes = {}
 
@@ -371,7 +387,7 @@ def _like_dislike_kb() -> InlineKeyboardMarkup:
 
 
 async def _run_hang_confirmation(bot: Bot, game: Game, eliminated, summary: str) -> bool:
-    settings = get_settings(game.chat_id)
+    settings = await get_settings(game.chat_id)
     secs = settings.hang_confirm_secs
     game.hang_confirm_votes = {}
 
@@ -446,7 +462,7 @@ async def _do_vote_resolution(bot: Bot, game: Game):
     role_name = ROLE_NAMES_UZ.get(eliminated.role, "")
     emoji = ROLE_EMOJIS.get(eliminated.role, "")
 
-    settings = get_settings(game.chat_id)
+    settings = await get_settings(game.chat_id)
     if settings.hang_confirm_enabled:
         confirmed = await _run_hang_confirmation(bot, game, eliminated, summary)
         if not confirmed:
@@ -454,11 +470,10 @@ async def _do_vote_resolution(bot: Bot, game: Game):
             await run_night(bot, game.chat_id)
             return
 
-    from profiles import get_profile, save_profile as _sp
-    ep = get_profile(eliminated_id)
+    ep = await get_profile(eliminated_id)
     if ep.hang_protect > 0:
         ep.hang_protect -= 1
-        _sp(ep)
+        await save_profile(ep)
         await bot.send_message(
             game.chat_id,
             f"🗳️ *Ovoz natijalari — {game.day_number}-kun:*\n{summary}\n\n"
@@ -538,14 +553,14 @@ async def _end_game(bot: Bot, game: Game, winner: str):
         subscribed = await _is_subscribed_to_promo_channel(bot, p.user_id)
         reward = WIN_REWARD * 2 if subscribed else WIN_REWARD
         win_rewards[p.user_id] = reward
-        record_win(p.user_id, dollar_reward=reward)
+        await record_win(p.user_id, dollar_reward=reward)
 
     RATING_WIN_POINTS = 10
     RATING_LOSS_POINTS = 1
     for p in winners:
-        record_game_result(game.chat_id, p.user_id, p.first_name, won=True, points=RATING_WIN_POINTS)
+        await record_game_result(game.chat_id, p.user_id, p.first_name, won=True, points=RATING_WIN_POINTS)
     for p in losers:
-        record_game_result(game.chat_id, p.user_id, p.first_name, won=False, points=RATING_LOSS_POINTS)
+        await record_game_result(game.chat_id, p.user_id, p.first_name, won=False, points=RATING_LOSS_POINTS)
 
     reward_text = f"\n💵 *G'oliblarga mukofot berildi!*" if winners else ""
 
@@ -566,19 +581,19 @@ async def _end_game(bot: Bot, game: Game, winner: str):
         bonus_note = " (2x kanal bonusi bilan!)" if reward > WIN_REWARD else ""
         await _dm(bot, p.user_id,
             f"🎉 Siz {reward}$ yutdingiz!{bonus_note}\n\n"
-            + _profile_text(p.user_id, p.first_name))
+            + await _profile_text(p.user_id, p.first_name))
     for p in losers:
         await _dm(bot, p.user_id,
-            "😔 Siz yutqazdingiz.\n\n" + _profile_text(p.user_id, p.first_name))
+            "😔 Siz yutqazdingiz.\n\n" + await _profile_text(p.user_id, p.first_name))
 
-    stats = load_stats()
+    stats = await load_stats()
     stats.total_games += 1
     stats.total_players += len(game.players)
     if winner == "mafia":
         stats.mafia_wins += 1
     elif winner == "citizens":
         stats.citizen_wins += 1
-    save_stats(stats)
+    await save_stats(stats)
 
 # ──────────────────────────────────────────────
 # Night action sender
@@ -587,7 +602,7 @@ async def _end_game(bot: Bot, game: Game, winner: str):
 async def _send_night_actions(bot: Bot, game: Game):
     alive = game.alive_players()
     chat_id = game.chat_id
-    secs = get_settings(chat_id).night_secs
+    secs = (await get_settings(chat_id)).night_secs
     mafia_names = ", ".join(
         p.display_name for p in alive if p.role in (Role.DON, Role.MAFIA)
     )
@@ -1033,7 +1048,7 @@ async def cmd_leave(msg: Message):
         return await msg.answer("⚠️ Bu buyruq faqat guruh chatlarda ishlaydi.")
 
     chat_id = msg.chat.id
-    settings = get_settings(chat_id)
+    settings = await get_settings(chat_id)
     if not settings.leave_enabled:
         return await msg.answer("⚠️ Bu guruhda /leave o'chirilgan.")
 
@@ -1065,15 +1080,23 @@ async def cmd_utag(msg: Message, bot: Bot):
 
     chat_id = msg.chat.id
 
-    # Collect known players from ratings (played before) + current game lobby
-    from ratings import _cache as rat_cache, _init as rat_init
-    rat_init()
-    known: dict[int, str] = {}  # user_id -> first_name
+    # Collect known players from ratings DB + current game lobby
+    from database import get_pool
+    known: dict[int, str] = {}  # user_id -> display_name
 
-    # From ratings (historical players)
-    for uid, entry in rat_cache.get(chat_id, {}).items():
-        if entry.first_name:
-            known[uid] = entry.first_name
+    # From ratings (historical players in this chat)
+    pool = get_pool()
+    if pool:
+        try:
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT user_id, first_name FROM ratings WHERE chat_id=$1", chat_id
+                )
+                for row in rows:
+                    if row["first_name"]:
+                        known[row["user_id"]] = row["first_name"]
+        except Exception:
+            pass
 
     # From current game lobby (may have new players with usernames)
     game = games.get(chat_id)
@@ -1141,12 +1164,18 @@ def _sozlash_main_kb(chat_id: int, settings: ChatSettings) -> InlineKeyboardMark
         if settings.auto_delete_dead
         else "🗑 O'lik xabarlar: ❌ O'chirilgan"
     )
+    atm_label = (
+        "🌙 Atmosfera xabarlari: ✅ Yoqilgan"
+        if settings.night_atmosphere
+        else "🌙 Atmosfera xabarlari: ❌ O'chirilgan"
+    )
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🃏 Rollarni yoqish/o'chirish", callback_data=f"soz:roles:0:{chat_id}")],
         [InlineKeyboardButton(text="🎭 Rollarni sozlash (o'yinchilar soni bo'yicha)", callback_data=f"soz:rcfgc:0:{chat_id}")],
         [InlineKeyboardButton(text=leave_label, callback_data=f"soz:toggle_leave:{chat_id}")],
         [InlineKeyboardButton(text=protect_label, callback_data=f"soz:toggle_protect:{chat_id}")],
         [InlineKeyboardButton(text=autodel_label, callback_data=f"soz:toggle_autodel:{chat_id}")],
+        [InlineKeyboardButton(text=atm_label, callback_data=f"soz:toggle_atm:{chat_id}")],
         [InlineKeyboardButton(text="⏳ Vaqtlarni sozlash", callback_data=f"soz:durations:{chat_id}")],
         [InlineKeyboardButton(text="✅ Yopish", callback_data=f"soz:close:{chat_id}")],
     ])
@@ -1283,7 +1312,7 @@ async def cmd_sozlash(msg: Message, bot: Bot):
     if not await _require_admin(msg, bot, chat_id, msg.from_user.id):
         return await msg.answer("⚠️ Faqat adminlar sozlashlarni o'zgartira oladi.")
 
-    settings = get_settings(chat_id)
+    settings = await get_settings(chat_id)
     try:
         await bot.send_message(
             msg.from_user.id,
@@ -1307,7 +1336,7 @@ async def cb_sozlash(call: CallbackQuery):
     if not await _require_admin(call, call.bot, chat_id, call.from_user.id):
         return await call.answer("⚠️ Faqat adminlar uchun.", show_alert=True)
 
-    settings = get_settings(chat_id)
+    settings = await get_settings(chat_id)
 
     if action == "main":
         await call.message.edit_text(
@@ -1331,7 +1360,7 @@ async def cb_sozlash(call: CallbackQuery):
             settings.disabled_roles.remove(role_val)
         else:
             settings.disabled_roles.append(role_val)
-        save_settings(settings)
+        await save_settings(settings)
         await call.message.edit_text(
             "🃏 *Rollarni yoqish/o'chirish*\n\nBosilganda holat o'zgaradi:",
             reply_markup=_sozlash_roles_kb(chat_id, settings, page),
@@ -1339,7 +1368,7 @@ async def cb_sozlash(call: CallbackQuery):
 
     elif action == "toggle_leave":
         settings.leave_enabled = not settings.leave_enabled
-        save_settings(settings)
+        await save_settings(settings)
         await call.message.edit_text(
             "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
             reply_markup=_sozlash_main_kb(chat_id, settings),
@@ -1347,7 +1376,7 @@ async def cb_sozlash(call: CallbackQuery):
 
     elif action == "toggle_protect":
         settings.protection_enabled = not settings.protection_enabled
-        save_settings(settings)
+        await save_settings(settings)
         await call.message.edit_text(
             "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
             reply_markup=_sozlash_main_kb(chat_id, settings),
@@ -1355,9 +1384,19 @@ async def cb_sozlash(call: CallbackQuery):
 
     elif action == "toggle_autodel":
         settings.auto_delete_dead = not settings.auto_delete_dead
-        save_settings(settings)
+        await save_settings(settings)
         status = "yoqildi ✅" if settings.auto_delete_dead else "o'chirildi ❌"
         await call.answer(f"🗑 O'lik xabarlarni o'chirish {status}", show_alert=False)
+        await call.message.edit_text(
+            "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
+            reply_markup=_sozlash_main_kb(chat_id, settings),
+        )
+
+    elif action == "toggle_atm":
+        settings.night_atmosphere = not settings.night_atmosphere
+        await save_settings(settings)
+        status = "yoqildi ✅" if settings.night_atmosphere else "o'chirildi ❌"
+        await call.answer(f"🌙 Atmosfera xabarlari {status}", show_alert=False)
         await call.message.edit_text(
             "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
             reply_markup=_sozlash_main_kb(chat_id, settings),
@@ -1372,7 +1411,7 @@ async def cb_sozlash(call: CallbackQuery):
     elif action == "set":
         field, value = parts[2], int(parts[3])
         setattr(settings, field, value)
-        save_settings(settings)
+        await save_settings(settings)
         await call.message.edit_text(
             "⏳ *Bosqich vaqtlarini sozlash*",
             reply_markup=_sozlash_durations_kb(chat_id, settings),
@@ -1442,7 +1481,7 @@ async def cb_sozlash(call: CallbackQuery):
         for role_name in session["roles"]:
             config[role_name] = 1
         settings.custom_role_configs[str(session["count"])] = config
-        save_settings(settings)
+        await save_settings(settings)
         del _rcfg_sessions[call.from_user.id]
         await call.message.edit_text(
             f"✅ *{session['count']} o'yinchi uchun sozlama saqlandi!*",
@@ -1454,7 +1493,7 @@ async def cb_sozlash(call: CallbackQuery):
         if not session or session["chat_id"] != chat_id:
             return await call.answer("⚠️ Sessiya topilmadi, qaytadan boshlang.", show_alert=True)
         settings.custom_role_configs.pop(str(session["count"]), None)
-        save_settings(settings)
+        await save_settings(settings)
         del _rcfg_sessions[call.from_user.id]
         await call.message.edit_text(
             "🎭 *Rollarni sozlash*\n\n"
@@ -1470,7 +1509,7 @@ async def cb_noop(call: CallbackQuery):
     await call.answer()
 
 
-def _assign_roles_with_preferences(game: Game, disabled_roles: list = None, custom_role_configs: dict = None):
+async def _assign_roles_with_preferences(game: Game, disabled_roles: list = None, custom_role_configs: dict = None):
     import random
     from game import get_role_list, get_custom_role_list
     players = list(game.players.values())
@@ -1486,7 +1525,7 @@ def _assign_roles_with_preferences(game: Game, disabled_roles: list = None, cust
     remaining = list(role_pool)
 
     for player in players:
-        prof = get_profile(player.user_id)
+        prof = await get_profile(player.user_id)
         for key in list(prof.active_roles):
             key = ROLE_KEY_ALIASES.get(key, key)
             item = PURCHASABLE_ROLES.get(key)
@@ -1498,7 +1537,7 @@ def _assign_roles_with_preferences(game: Game, disabled_roles: list = None, cust
                 remaining.remove(desired_role)
                 if key in prof.active_roles:
                     prof.active_roles.remove(key)
-                save_profile(prof)
+                await save_profile(prof)
                 break
 
     random.shuffle(remaining)
@@ -1530,8 +1569,8 @@ async def _launch_game(msg: Message, bot: Bot):
 
     game.group_link = await _group_link(bot, chat_id)
 
-    chat_settings = get_settings(chat_id)
-    _assign_roles_with_preferences(
+    chat_settings = await get_settings(chat_id)
+    await _assign_roles_with_preferences(
         game,
         disabled_roles=chat_settings.disabled_roles,
         custom_role_configs=chat_settings.custom_role_configs,
@@ -1539,7 +1578,7 @@ async def _launch_game(msg: Message, bot: Bot):
     game.day_number = 1
 
     for player in game.players.values():
-        record_game_start(player.user_id, player.first_name)
+        await record_game_start(player.user_id, player.first_name)
 
     await msg.answer(
         f"🟢 *O'YIN BOSHLANDI!*\n\n"
@@ -1607,12 +1646,12 @@ async def cmd_endgame(msg: Message, bot: Bot):
     await msg.answer(f"🛑 *O'yin admin tomonidan tugatildi.*\n\n*Rollar:*\n{role_list}")
 
 
-@router.message(Command("reyting"))
-async def cmd_reyting(msg: Message):
+@router.message(Command("reyting", "top"))
+async def cmd_top(msg: Message):
     if msg.chat.type == "private":
         return await msg.answer("⚠️ Bu buyruq faqat guruh chatlarda ishlaydi.")
 
-    top = get_top_ratings(msg.chat.id)
+    top = await get_top_ratings(msg.chat.id)
     if not top:
         return await msg.answer("📊 Bu guruhda hali reyting yo'q. O'yin o'ynang!")
 
@@ -1630,7 +1669,7 @@ async def cmd_reyting(msg: Message):
 
 @router.message(Command("stats"))
 async def cmd_stats(msg: Message):
-    stats = load_stats()
+    stats = await load_stats()
     total = stats.total_games
     if total == 0:
         return await msg.answer("📊 Hali hech qanday o'yin o'ynalmagan!")
@@ -1647,7 +1686,7 @@ async def cmd_stats(msg: Message):
 
 
 async def _is_subscribed_to_promo_channel(bot: Bot, user_id: int) -> bool:
-    channel = get_promo_channel()
+    channel = await get_promo_channel()
     if not channel:
         return False
     try:
@@ -1657,8 +1696,8 @@ async def _is_subscribed_to_promo_channel(bot: Bot, user_id: int) -> bool:
         return False
 
 
-def _promo_text() -> str:
-    channel = get_promo_channel()
+async def _promo_text() -> str:
+    channel = await get_promo_channel()
     if not channel:
         return ""
     link = channel if channel.startswith("http") or channel.startswith("@") else f"@{channel}"
@@ -1672,7 +1711,7 @@ async def cmd_kanal(msg: Message):
 
     parts = msg.text.split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
-        current = get_promo_channel()
+        current = await get_promo_channel()
         not_set = "o'rnatilmagan"
         return await msg.answer(
             f"📢 Hozirgi reklama kanali: *{escape_md(current) if current else not_set}*\n\n"
@@ -1680,12 +1719,12 @@ async def cmd_kanal(msg: Message):
         )
 
     channel = parts[1].strip()
-    set_promo_channel(channel)
+    await set_promo_channel(channel)
     await msg.answer(f"✅ Reklama kanali o'rnatildi: *{escape_md(channel)}*")
 
 
-def _profile_text(user_id: int, first_name: str) -> str:
-    p = get_profile(user_id, first_name)
+async def _profile_text(user_id: int, first_name: str) -> str:
+    p = await get_profile(user_id, first_name)
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     dollar_str = "♾️" if p.infinite_dollar else f"{p.dollar}$"
     win_rate = f"{round(p.wins / p.games * 100)}%" if p.games > 0 else "—"
@@ -1714,13 +1753,31 @@ def _profile_text(user_id: int, first_name: str) -> str:
         f"📈 G'alaba foizi: *{win_rate}*\n\n"
         f"🎒 *Inventar:*\n{items_str}\n\n"
         f"🃏 Faol rollar: {roles_str}"
-    ) + _promo_text()
+    ) + await _promo_text()
 
 
 @router.message(Command("profile"))
 async def cmd_profile(msg: Message):
     user = msg.from_user
-    await msg.answer(_profile_text(user.id, user.first_name))
+    shop_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛒 Do'kon", callback_data="open_shop")]
+    ])
+    await msg.answer(await _profile_text(user.id, user.first_name), reply_markup=shop_kb)
+
+
+@router.callback_query(F.data == "open_shop")
+async def cb_open_shop(call: CallbackQuery):
+    uid = call.from_user.id
+    p = await get_profile(uid, call.from_user.first_name)
+    diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
+    await call.answer()
+    await call.message.edit_text(
+        f"🛒 *DO'KON*\n\n"
+        f"💵 Balansingiz: *{p.dollar}$*\n"
+        f"💎 Olmoslaringiz: *{diamond_str}*\n\n"
+        "Sotib olmoqchi bo'lgan narsani tanlang:",
+        reply_markup=_shop_kb(),
+    )
 
 
 @router.message(Command("tekshiruv"))
@@ -1761,21 +1818,21 @@ async def cmd_give(msg: Message):
             return await msg.answer("❌ Botga o'tkazib bo'lmaydi.")
         if target.id == giver.id:
             return await msg.answer("❌ O'zingizga o'tkazib bo'lmaydi.")
-        get_profile(giver.id, giver.first_name)
-        get_profile(target.id, target.first_name)
-        if not transfer_diamond(giver.id, target.id, amount):
+        await get_profile(giver.id, giver.first_name)
+        await get_profile(target.id, target.first_name)
+        if not await transfer_diamond(giver.id, target.id, amount):
             return await msg.answer("❌ Yetarli olmos yo'q.")
         return await msg.answer(
             f"💎 *{escape_md(giver.first_name)}* → *{escape_md(target.first_name)}*ga *{amount}* olmos o'tkazdi!"
         )
 
-    giver_p = get_profile(giver.id, giver.first_name)
+    giver_p = await get_profile(giver.id, giver.first_name)
     if not giver_p.infinite_diamond and giver_p.diamond < amount:
         return await msg.answer(f"❌ Yetarli olmos yo'q. Sizda: *{giver_p.diamond}* 💎")
 
     if not giver_p.infinite_diamond:
         giver_p.diamond -= amount
-        save_profile(giver_p)
+        await save_profile(giver_p)
 
     game = games.get(msg.chat.id)
     if game is None:
@@ -1812,8 +1869,8 @@ async def cb_claim_diamond(call: CallbackQuery):
 
     drop["claimed"].add(user.id)
     drop["remaining"] -= 1
-    get_profile(user.id, user.first_name)
-    add_diamond(user.id, 1)
+    await get_profile(user.id, user.first_name)
+    await add_diamond(user.id, 1)
     await call.answer("✅ Siz 1 olmos oldingiz!", show_alert=True)
 
     if drop["remaining"] <= 0:
@@ -1844,21 +1901,21 @@ async def cmd_money(msg: Message):
             return await msg.answer("❌ Botga o'tkazib bo'lmaydi.")
         if target.id == giver.id:
             return await msg.answer("❌ O'zingizga o'tkazib bo'lmaydi.")
-        get_profile(giver.id, giver.first_name)
-        get_profile(target.id, target.first_name)
-        if not transfer_dollar(giver.id, target.id, amount):
+        await get_profile(giver.id, giver.first_name)
+        await get_profile(target.id, target.first_name)
+        if not await transfer_dollar(giver.id, target.id, amount):
             return await msg.answer("❌ Yetarli pul yo'q.")
         return await msg.answer(
             f"💵 *{escape_md(giver.first_name)}* → *{escape_md(target.first_name)}*ga *{amount}$* o'tkazdi!"
         )
 
-    giver_p = get_profile(giver.id, giver.first_name)
+    giver_p = await get_profile(giver.id, giver.first_name)
     if not giver_p.infinite_dollar and giver_p.dollar < amount:
         return await msg.answer(f"❌ Yetarli pul yo'q. Sizda: *{giver_p.dollar}$*")
 
     if not giver_p.infinite_dollar:
         giver_p.dollar -= amount
-        save_profile(giver_p)
+        await save_profile(giver_p)
 
     per_claim = 10 if amount <= 100 else 100
 
@@ -1894,8 +1951,8 @@ async def cb_claim_money(call: CallbackQuery):
         return await call.answer("⚠️ Siz allaqachon oldingiz!", show_alert=True)
 
     drop["claimed"].add(user.id)
-    get_profile(user.id, user.first_name)
-    add_dollar(user.id, drop["per_claim"])
+    await get_profile(user.id, user.first_name)
+    await add_dollar(user.id, drop["per_claim"])
     await call.answer(f"✅ Siz {drop['per_claim']}$ oldingiz!", show_alert=True)
 
 
@@ -1967,7 +2024,7 @@ def _role_shop_kb() -> InlineKeyboardMarkup:
 @router.message(Command("roleshop"))
 async def cmd_roleshop(msg: Message):
     user = msg.from_user
-    p = get_profile(user.id, user.first_name)
+    p = await get_profile(user.id, user.first_name)
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     active = ", ".join(p.active_roles) if p.active_roles else "Yo'q"
     await msg.answer(
@@ -1985,7 +2042,7 @@ async def cb_role_buy(call: CallbackQuery):
     key = call.data.removeprefix("role_")
 
     if key == "mylist":
-        p = get_profile(call.from_user.id, call.from_user.first_name)
+        p = await get_profile(call.from_user.id, call.from_user.first_name)
         active = "\n".join(
             f"  {PURCHASABLE_ROLES[k][1]} {PURCHASABLE_ROLES[k][2]}"
             for k in p.active_roles if k in PURCHASABLE_ROLES
@@ -1999,7 +2056,7 @@ async def cb_role_buy(call: CallbackQuery):
 
     role_enum, em, name, price = item
     uid = call.from_user.id
-    p = get_profile(uid, call.from_user.first_name)
+    p = await get_profile(uid, call.from_user.first_name)
 
     if not p.infinite_diamond and p.diamond < price:
         return await call.answer(
@@ -2015,7 +2072,7 @@ async def cb_role_buy(call: CallbackQuery):
     if not p.infinite_diamond:
         p.diamond -= price
     p.active_roles.append(key)
-    save_profile(p)
+    await save_profile(p)
 
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     await call.answer(f"✅ {em} {name} roli sotib olindi!", show_alert=True)
@@ -2059,7 +2116,7 @@ def _shop_kb() -> InlineKeyboardMarkup:
 @router.message(Command("shop"))
 async def cmd_shop(msg: Message):
     user = msg.from_user
-    p = get_profile(user.id, user.first_name)
+    p = await get_profile(user.id, user.first_name)
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     await msg.answer(
         f"🛒 *DO'KON*\n\n"
@@ -2092,7 +2149,7 @@ async def cmd_buy(msg: Message):
 
     em, name, currency, price, field = item
     uid = msg.from_user.id
-    p = get_profile(uid, msg.from_user.first_name)
+    p = await get_profile(uid, msg.from_user.first_name)
 
     if currency == "dollar":
         if p.dollar < price:
@@ -2109,7 +2166,7 @@ async def cmd_buy(msg: Message):
             p.diamond -= price
 
     setattr(p, field, getattr(p, field) + 1)
-    save_profile(p)
+    await save_profile(p)
 
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     await msg.answer(
@@ -2136,7 +2193,7 @@ async def cb_shop_buy(call: CallbackQuery):
 
     em, name, currency, price, field = item
     uid = call.from_user.id
-    p = get_profile(uid, call.from_user.first_name)
+    p = await get_profile(uid, call.from_user.first_name)
 
     if currency == "dollar":
         if p.dollar < price:
@@ -2155,7 +2212,7 @@ async def cb_shop_buy(call: CallbackQuery):
             p.diamond -= price
 
     setattr(p, field, getattr(p, field) + 1)
-    save_profile(p)
+    await save_profile(p)
 
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     await call.answer(f"✅ {em} {name} sotib olindi!", show_alert=False)
@@ -2176,7 +2233,7 @@ async def cb_shop_buy(call: CallbackQuery):
 @router.callback_query(F.data == "shop_profile")
 async def cb_shop_profile(call: CallbackQuery):
     uid = call.from_user.id
-    p = get_profile(uid, call.from_user.first_name)
+    p = await get_profile(uid, call.from_user.first_name)
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     win_rate = f"{round(p.wins / p.games * 100)}%" if p.games > 0 else "—"
 
@@ -2209,7 +2266,7 @@ async def cb_shop_profile(call: CallbackQuery):
 @router.callback_query(F.data == "shop_back")
 async def cb_shop_back(call: CallbackQuery):
     uid = call.from_user.id
-    p = get_profile(uid, call.from_user.first_name)
+    p = await get_profile(uid, call.from_user.first_name)
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     await call.answer()
     await call.message.edit_text(
@@ -2289,7 +2346,7 @@ async def cb_join(call: CallbackQuery, bot: Bot):
 
 # ── Night action callbacks ──
 
-async def _night_cb(call: CallbackQuery, action_key, target_id: int, chat_id: int, confirm_text: str):
+async def _night_cb(call: CallbackQuery, action_key, target_id: int, chat_id: int, confirm_text: str, atmosphere_text: str = ""):
     game = games.get(chat_id)
     if not game or game.phase != Phase.NIGHT:
         return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
@@ -2304,6 +2361,8 @@ async def _night_cb(call: CallbackQuery, action_key, target_id: int, chat_id: in
     game.night_acted_uids.add(call.from_user.id)
     await call.answer(confirm_text)
     await call.message.edit_text(f"✅ {confirm_text}")
+    if atmosphere_text:
+        await _atmosphere(call.bot, chat_id, atmosphere_text)
 
     if game.all_night_actions_done():
         asyncio.create_task(_do_night_resolution(call.bot, game))
@@ -2328,6 +2387,8 @@ async def cb_nk(call: CallbackQuery):
     game.night_acted_uids.add(call.from_user.id)
     await call.answer(f"🔪 Nishon: {target.display_name}")
     await call.message.edit_text(f"🔪 Nishon tanlandi: *{target.display_name}*")
+    role_atm = "🤵🏻 Don bugungi qurbonini tanlamoqda..." if actor.role == Role.DON else "🤵🏼 Mafiya Donning buyrug'ini bajarishga tayyorlanmoqda..."
+    await _atmosphere(call.bot, cid, role_atm)
     if game.all_night_actions_done():
         asyncio.create_task(_do_night_resolution(call.bot, game))
 
@@ -2335,19 +2396,22 @@ async def cb_nk(call: CallbackQuery):
 @router.callback_query(F.data.startswith("nyq:"))
 async def cb_nyq(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.YOLLANMA_QOTIL, int(tid), int(cid), f"🥷 Nishon tanlandi")
+    await _night_cb(call, Role.YOLLANMA_QOTIL, int(tid), int(cid), "🥷 Nishon tanlandi",
+                    "🥷 Yollanma qotil qorong'ulikda ov boshladi...")
 
 
 @router.callback_query(F.data.startswith("nadv:"))
 async def cb_nadv(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.ADVOKAT, int(tid), int(cid), "👨🏼‍💼 Himoyaga olindi")
+    await _night_cb(call, Role.ADVOKAT, int(tid), int(cid), "👨🏼‍💼 Himoyaga olindi",
+                    "👨🏼‍💼 Advokat mijozini himoya qilishga kirishdi...")
 
 
 @router.callback_query(F.data.startswith("njurn:"))
 async def cb_njurn(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.JURNALIST, int(tid), int(cid), "👩🏼‍💻 Manzil tanlandi")
+    await _night_cb(call, Role.JURNALIST, int(tid), int(cid), "👩🏼‍💻 Manzil tanlandi",
+                    "👩🏼‍💻 Jurnalist yashirin intervyu olish uchun yo'lga chiqdi...")
 
 
 @router.callback_query(F.data.startswith("nkommode:"))
@@ -2377,43 +2441,55 @@ async def cb_nkom(call: CallbackQuery):
     key = Role.KOMISSAR if game.get_alive_by_role(Role.KOMISSAR) else Role.SERZHANT
     mode = game.night_actions.get("komissar_mode", "check")
     confirm = "🔫 Nishon tanlandi" if mode == "kill" else "🕵🏼 Tekshirilmoqda"
-    await _night_cb(call, key, int(tid), int(cid), confirm)
+    if mode == "kill":
+        atm = "🔫 Komissar pistoletini o'qladi..."
+    elif key == Role.SERZHANT:
+        atm = "👮🏼 Serjant tungi tekshiruvga yo'l oldi..."
+    else:
+        atm = "🕵🏼 Komissar tungi tekshiruvga yo'l oldi..."
+    await _night_cb(call, key, int(tid), int(cid), confirm, atm)
 
 
 @router.callback_query(F.data.startswith("nlab:"))
 async def cb_nlab(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.LABARANT, int(tid), int(cid), "🧪 Nishon tanlandi")
+    await _night_cb(call, Role.LABARANT, int(tid), int(cid), "🧪 Nishon tanlandi",
+                    "🧪 Labarant maxsus eritmasini tayyorlamoqda...")
 
 
 @router.callback_query(F.data.startswith("ndoc:"))
 async def cb_ndoc(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.DOCTOR, int(tid), int(cid), "💊 Himoyaga olindi")
+    await _night_cb(call, Role.DOCTOR, int(tid), int(cid), "💊 Himoyaga olindi",
+                    "👨🏼‍⚕️ Doktor kimnidir qutqarish uchun shoshildi...")
 
 
 @router.callback_query(F.data.startswith("nkez:"))
 async def cb_nkez(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.KEZUVCHI, int(tid), int(cid), "💃 Uyqu dori berildi")
+    await _night_cb(call, Role.KEZUVCHI, int(tid), int(cid), "💃 Uyqu dori berildi",
+                    "💃 Kezuvchi uyqu dorisini tayyorlamoqda...")
 
 
 @router.callback_query(F.data.startswith("nday:"))
 async def cb_nday(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.DAYDI, int(tid), int(cid), "🧙‍♂️ Tashrif manzili tanlandi")
+    await _night_cb(call, Role.DAYDI, int(tid), int(cid), "🧙‍♂️ Tashrif manzili tanlandi",
+                    "🧙‍♂️ Daydi shahar bo'ylab kuzatuv boshladi...")
 
 
 @router.callback_query(F.data.startswith("nqot:"))
 async def cb_nqot(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.QOTIL, int(tid), int(cid), "🔪 Nishon tanlandi")
+    await _night_cb(call, Role.QOTIL, int(tid), int(cid), "🔪 Nishon tanlandi",
+                    "🔪 Qotil navbatdagi qurbonini izlamoqda...")
 
 
 @router.callback_query(F.data.startswith("ntulki:"))
 async def cb_ntulki(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.TULKI, int(tid), int(cid), "🦊 Nishon tanlandi")
+    await _night_cb(call, Role.TULKI, int(tid), int(cid), "🦊 Nishon tanlandi",
+                    "🦊 Tulki yangi qiyofasini izlamoqda...")
 
 
 @router.callback_query(F.data.startswith("nkimmode:"))
@@ -2439,19 +2515,22 @@ async def cb_nkim(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     mode = games.get(int(cid), Game(0)).night_actions.get("kimyogar_mode", "heal")
     label = "davolash" if mode == "heal" else "o'ldirish"
-    await _night_cb(call, Role.KIMYOGAR, int(tid), int(cid), f"👨‍🔬 {label} tanlandi")
+    atm = "🧪 Kimyogar davolash eliksirini tayyorlamoqda..." if mode == "heal" else "☠️ Kimyogar zahar tayyorlamoqda..."
+    await _night_cb(call, Role.KIMYOGAR, int(tid), int(cid), f"👨‍🔬 {label} tanlandi", atm)
 
 
 @router.callback_query(F.data.startswith("nmin:"))
 async def cb_nmin(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.MINIOR, int(tid), int(cid), "☠️ Mina qo'yildi")
+    await _night_cb(call, Role.MINIOR, int(tid), int(cid), "☠️ Mina qo'yildi",
+                    "☠️ Minyor qorong'ulikdan foydalanib mina o'rnatmoqda...")
 
 
 @router.callback_query(F.data.startswith("nafer:"))
 async def cb_nafer(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.AFERIST, int(tid), int(cid), "🤹🏻 Shaxs almashtirildi")
+    await _night_cb(call, Role.AFERIST, int(tid), int(cid), "🤹🏻 Shaxs almashtirildi",
+                    "🤹🏻 Aferist yangi hiylasini tayyorlamoqda...")
 
 
 @router.callback_query(F.data.startswith("ngaz:"))
@@ -2812,22 +2891,22 @@ async def cb_nkonchi(call: CallbackQuery):
     game.night_actions[Role.KONCHI] = num
     game.night_acted_uids.add(uid)
 
-    p = get_profile(uid, call.from_user.first_name)
+    p = await get_profile(uid, call.from_user.first_name)
 
     if typ == "diamond":
-        add_diamond(uid, amount)
+        await add_diamond(uid, amount)
         result = f"💎 *{amount} olmos* topdingiz!"
         detail = f"Umumiy olmos: {p.diamond + amount} 💎"
         game.konchi_morning_msg = f"⛏️ Konchi tunda {amount} olmos topdi."
     elif typ == "money":
-        add_dollar(uid, amount)
+        await add_dollar(uid, amount)
         result = f"💵 *{amount}$* topdingiz!"
         detail = f"Umumiy dollar: {p.dollar + amount}$"
         game.konchi_morning_msg = f"⛏️ Konchi tunda {amount}$ pul topdi."
     else:
         game.night_actions["konchi_mine"] = True
         p.mines += 1
-        save_profile(p)
+        await save_profile(p)
         result = "💣 *MINAGA TUSHDINGIZ!*"
         detail = "Bu kecha halok bo'lasiz..."
         game.konchi_morning_msg = "⛏️ Konchi tunda minaga tushdi!"
@@ -2906,6 +2985,8 @@ async def cb_qar_t(call: CallbackQuery):
         f"Bu kecha boshqa amal tanlay olmaysiz. Natija ertalab ma'lum bo'ladi."
     )
     await call.answer("✅ Amal tanlandi!")
+    atm = "🏴‍☠️ Qaroqchi kimnidir tunamoqda..." if mode == "steal" else "🥊 Qaroqchi kimnidir kaltaklamoqda..."
+    await _atmosphere(call.bot, cid, atm)
     if game.all_night_actions_done():
         asyncio.create_task(_do_night_resolution(call.bot, game))
 
@@ -2922,7 +3003,7 @@ async def auto_delete_handler(msg: Message, bot: Bot):
         return
 
     chat_id = msg.chat.id
-    settings = get_settings(chat_id)
+    settings = await get_settings(chat_id)
     if not settings.auto_delete_dead:
         return
 
