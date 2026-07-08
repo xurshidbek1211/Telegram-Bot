@@ -291,11 +291,33 @@ async def _atmosphere(bot: Bot, chat_id: int, text: str):
         pass
 
 
+def _format_night_summary(deaths: list) -> str:
+    """Build the '📋 Kecha natijalari' block: one entry per victim with their
+    role and the role(s) of whoever came to kill them ('Mehmoni'/'Mehmonlari'),
+    in arrival order. If nobody died, show the standard fallback line."""
+    if not deaths:
+        return "📋 *Kecha natijalari*\n\n🌅 Bu tun hech kim halok bo'lmadi."
+
+    blocks = []
+    for d in deaths:
+        lines = [f"• ☠️ *{d['name']}* yo'q qilindi.", f"Roli: {d['role_emoji']} {d['role_name']}"]
+        attackers = d["attackers"]
+        if len(attackers) == 1:
+            em, nm = attackers[0]
+            lines.append(f"Mehmoni: {em} {nm}")
+        elif len(attackers) > 1:
+            lines.append("Mehmonlari:\n")
+            lines.extend(f"• {em} {nm}" for em, nm in attackers)
+        blocks.append("\n".join(lines))
+
+    return "📋 *Kecha natijalari*\n\n" + "\n\n".join(blocks)
+
+
 async def _do_night_resolution(bot: Bot, game: Game):
     if game.phase != Phase.NIGHT:
         return
     settings = await get_settings(game.chat_id)
-    events = await resolve_night(game, bot)
+    deaths, events = await resolve_night(game, bot)
 
     # ── AFK check ──
     required = game.night_required_snapshot
@@ -325,11 +347,12 @@ async def _do_night_resolution(bot: Bot, game: Game):
     game.phase = Phase.DAY
 
     winner = game.check_win_condition()
-    summary = "\n".join(f"• {e}" for e in events)
+    night_summary = _format_night_summary(deaths)
+    extra = "\n".join(f"• {e}" for e in events)
 
     if winner:
-        if summary:
-            await bot.send_message(game.chat_id, f"📋 Kecha natijalari:\n{summary}")
+        text = night_summary + (f"\n\n{extra}" if extra else "")
+        await bot.send_message(game.chat_id, text)
         await _end_game(bot, game, winner)
         return
 
@@ -338,7 +361,8 @@ async def _do_night_resolution(bot: Bot, game: Game):
 
     morning_header = (
         f"🌅 Xayrli tong!\n\n☀️ Kun: {game.day_number}"
-        + (f"\n\n📋 Kecha natijalari:\n{summary}" if summary else "")
+        + f"\n\n{night_summary}"
+        + (f"\n\n{extra}" if extra else "")
         + f"\n\n{_alive_status_block(game)}"
     )
 

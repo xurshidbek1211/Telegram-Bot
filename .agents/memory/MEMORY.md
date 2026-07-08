@@ -4,3 +4,4 @@
 - [Joker Card Game Flow](joker-card-game.md) — death card + target chosen at night; cards sent during voting; target picks before timer ends or auto-dies; clear pending after use.
 - [Role Config Dict Migration](role-config-dict.md) — roles session changed from set to dict[str,int]; countable roles (Serzhant,Tulki,Qotil,Afsungar,Citizen) use ➕/➖; MAFIA int stored as extra count; normalize on load from DB.
 - [VS Mode Single Registry](vs-mode-registry.md) — VS games stored in shared `games` dict (not separate vs_games); vs_mode=True flag distinguishes them; /vsgame blocks if any non-ENDED game exists.
+- [Night summary & role-swap privacy](night-summary-format.md) — resolve_night returns (deaths, events); deaths render as structured Mehmoni/Mehmonlari block; role-swap promotions are DM-only, never group chat.
