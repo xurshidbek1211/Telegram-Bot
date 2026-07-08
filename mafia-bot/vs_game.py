@@ -48,8 +48,8 @@ def _lobby_text(game: Game) -> str:
     red_players = [p for uid, p in game.players.items() if uid in game.vs_red_team]
     blue_players = [p for uid, p in game.players.items() if uid in game.vs_blue_team]
 
-    red_list = "\n".join(f"• {p.display_name}" for p in red_players) or "  _(hech kim yo'q)_"
-    blue_list = "\n".join(f"• {p.display_name}" for p in blue_players) or "  _(hech kim yo'q)_"
+    red_list = "\n".join(f"• {game.get_display_name(p)}" for p in red_players) or "  _(hech kim yo'q)_"
+    blue_list = "\n".join(f"• {game.get_display_name(p)}" for p in blue_players) or "  _(hech kim yo'q)_"
 
     return (
         f"⚔️ *VS MODE — RO'YXAT*\n\n"
@@ -295,11 +295,10 @@ async def end_vs_game(bot: Bot, game: Game, winner: str):
     loser_players  = [p for p in game.players.values() if p.user_id not in winner_ids and p.role]
 
     def _fmt(p):
-        team_em = "🔴" if p.user_id in game.vs_red_team else "🔵"
         em = ROLE_EMOJIS.get(p.role, "")
         rn = ROLE_NAMES_UZ.get(p.role, "")
         alive_mark = "✅" if p.alive else "☠️"
-        return f"{alive_mark} {team_em} {p.display_name} — {em} {rn}"
+        return f"{alive_mark} {game.get_display_name(p)} — {em} {rn}"
 
     winners_list = "\n".join(_fmt(p) for p in winner_players) or "—"
     losers_list  = "\n".join(_fmt(p) for p in loser_players)  or "—"

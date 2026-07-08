@@ -283,7 +283,13 @@ class Game:
         self.night_required_snapshot = self.required_night_actors()
 
     def get_display_name(self, player: Player) -> str:
-        return self.aferist_swaps.get(player.user_id, player.display_name)
+        name = self.aferist_swaps.get(player.user_id, player.display_name)
+        if self.vs_mode:
+            if player.user_id in self.vs_red_team:
+                return f"🔴 {name}"
+            if player.user_id in self.vs_blue_team:
+                return f"🔵 {name}"
+        return name
 
     def required_night_actors(self) -> set:
         required = set()
