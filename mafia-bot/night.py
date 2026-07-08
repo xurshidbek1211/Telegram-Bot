@@ -224,8 +224,8 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
                 role_nm = _role_name(target_p.role)
                 if apparent:
                     komissar_result = (
-                        f"🕵🏼 *Tekshiruv yakunlandi.*\n\n"
-                        f"🎭 Rol: {role_em} *{role_nm}*"
+                        f"🔎 *Tekshiruv natijasi:*\n\n"
+                        f"{target_p.display_name} — {role_em} {role_nm}"
                     )
                     komissar_found_mafia_info = {
                         "name": target_p.display_name,
@@ -236,8 +236,8 @@ async def resolve_night(game: Game, bot: Bot) -> list[str]:
                     }
                 else:
                     komissar_result = (
-                        "🕵🏼 *Tekshiruv yakunlandi.*\n\n"
-                        "🎭 Rol: 👨🏼 Tinch Aholi"
+                        f"🔎 *Tekshiruv natijasi:*\n\n"
+                        f"{target_p.display_name} — 👨🏼 Tinch Aholi"
                     )
                 game.komissar_investigations.setdefault(active_k.user_id, []).append(
                     (target_p.display_name, role_nm)

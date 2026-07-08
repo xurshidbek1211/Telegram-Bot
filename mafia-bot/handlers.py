@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import random
+import time
 from typing import Optional
 from aiogram import Router, Bot, F
 from aiogram.filters import Command
@@ -92,6 +93,29 @@ def _day_status_block(game: Game) -> str:
     )
 
 
+def _alive_status_block(game: Game) -> str:
+    alive = game.alive_players()
+    alive_list = "\n".join(
+        f"{i}. {game.get_display_name(p)}" for i, p in enumerate(alive, 1)
+    ) or "—"
+    tinchlar = [p for p in alive if p.role and p.role not in MAFIA_TEAM and p.role != Role.QOTIL]
+    mafiyalar = [p for p in alive if p.role and p.role in MAFIA_TEAM]
+    tinch_roles = "\n".join(
+        f"{ROLE_EMOJIS.get(p.role, '')} {ROLE_NAMES_UZ.get(p.role, '')}"
+        for p in tinchlar
+    ) or "—"
+    mafia_roles = "\n".join(
+        f"{ROLE_EMOJIS.get(p.role, '')} {ROLE_NAMES_UZ.get(p.role, '')}"
+        for p in mafiyalar
+    ) or "—"
+    return (
+        f"Tirik o'yinchilar:\n\n{alive_list}\n\n"
+        f"Tinchlar: {len(tinchlar)}\n{tinch_roles}\n\n"
+        f"Mafiyalar: {len(mafiyalar)}\n{mafia_roles}\n\n"
+        f"Jami: {len(alive)} ta"
+    )
+
+
 _bot_username: Optional[str] = None
 
 
@@ -140,11 +164,10 @@ def _lobby_kb(chat_id: int, bot_username: Optional[str] = None) -> InlineKeyboar
 
 def _lobby_text(game: Game) -> str:
     return (
-        f"🎮 *RO'YXATDAN O'TISH BOSHLANDI!*\n\n"
-        "Quyidagi tugmani bosib qo'shiling!\n"
-        "Tayyor bo'lganda admin /start bossin.\n\n"
-        f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
-        f"{_player_list(game)}"
+        f"Ro'yxatdan o'tish davom etmoqda!\n\n"
+        f"Ro'yxatdan o'tganlar:\n"
+        f"{_player_list(game)}\n\n"
+        f"Jami: {len(game.players)} ta"
     )
 
 
@@ -224,13 +247,15 @@ async def run_night(bot: Bot, chat_id: int):
     _auto_passive(game)
 
     bot_username = await _get_bot_username(bot)
+    alive_list_night = "\n".join(
+        f"{i}. {game.get_display_name(p)}"
+        for i, p in enumerate(game.alive_players(), 1)
+    )
     await bot.send_message(
         chat_id,
-        f"🌙 *{game.day_number}-KECHA BOSHLANDI!*\n"
-        f"⏳ Vaqt: *{settings.night_secs} soniya*\n\n"
-        "Har bir o'yinchi shaxsiy xabarda harakat tanlashini kutmoqda...\n"
-        "⚠️ Agar DM kelmasa — botga /start yozing!",
-        reply_markup=_dm_entry_kb(bot_username, "🤖 Botga o'tish", chat_id, "group"),
+        f"🌙 Tun\n\nTirik o'yinchilar:\n\n{alive_list_night}\n\n"
+        f"⏳ Tonggacha: {settings.night_secs} sekund",
+        reply_markup=_dm_entry_kb(bot_username, "🤖 Botga kirish", chat_id, "group"),
     )
 
     await _send_night_actions(bot, game)
@@ -298,15 +323,19 @@ async def _do_night_resolution(bot: Bot, game: Game):
     summary = "\n".join(f"• {e}" for e in events)
 
     if winner:
-        await bot.send_message(
-            game.chat_id,
-            f"🌙 *{game.day_number}-kecha yakunlandi:*\n\n{summary}",
-        )
+        if summary:
+            await bot.send_message(game.chat_id, f"📋 Kecha natijalari:\n{summary}")
         await _end_game(bot, game, winner)
         return
 
     found_mafia = game.komissar_found_mafia
     game.komissar_found_mafia = None
+
+    morning_header = (
+        f"🌅 Xayrli tong!\n\n☀️ Kun: {game.day_number}"
+        + (f"\n\n📋 Kecha natijalari:\n{summary}" if summary else "")
+        + f"\n\n{_alive_status_block(game)}"
+    )
 
     if found_mafia:
         mention = f"@{found_mafia['username']}" if found_mafia.get('username') else found_mafia['name']
@@ -314,25 +343,15 @@ async def _do_night_resolution(bot: Bot, game: Game):
         role_nm = found_mafia['role_name']
         await bot.send_message(
             game.chat_id,
-            f"🌙 *{game.day_number}-kecha yakunlandi:*\n\n{summary}\n\n"
-            f"🚨 *Komissar Mafiya jamoasi a'zosini fosh qildi!*\n\n"
+            morning_header + f"\n\n🚨 *Komissar Mafiya jamoasi a'zosini fosh qildi!*\n\n"
             f"👤 O'yinchi: {escape_md(mention)}\n"
             f"🎭 Rol: {role_em} *{role_nm}*\n\n"
-            "⚖️ Bugungi ovoz berishda ushbu o'yinchi sud qilinadi!\n\n"
-            "☀️ Darhol ovoz berish boshlanadi!\n\n"
-            f"{_day_status_block(game)}",
+            "⚖️ Darhol ovoz berish boshlanadi!",
         )
         await run_vote(bot, game.chat_id)
         return
 
-    await bot.send_message(
-        game.chat_id,
-        f"🌙 *{game.day_number}-kecha yakunlandi:*\n\n{summary}\n\n"
-        f"☀️ *KUN MUHOKAMASI BOSHLANDI!*\n"
-        f"⏳ Muhokama vaqti: *{settings.day_secs} soniya*\n\n"
-        "Kim Mafiya ekanini aniqlashga harakat qiling!\n\n"
-        f"{_day_status_block(game)}",
-    )
+    await bot.send_message(game.chat_id, morning_header)
 
     await asyncio.sleep(settings.day_secs)
     await run_vote(bot, game.chat_id)
@@ -350,14 +369,15 @@ async def run_vote(bot: Bot, chat_id: int):
     alive = game.alive_players()
     bot_username = await _get_bot_username(bot)
 
+    vote_url = f"https://t.me/{bot_username}" if bot_username else None
+    vote_inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🗳️ Ovoz berish", url=vote_url)
+    ]]) if vote_url else None
     msg = await bot.send_message(
         chat_id,
-        f"🗳️ *OVOZ BERISH BOSHLANDI!*\n"
-        f"⏳ Vaqt: *{settings.vote_secs} soniya*\n\n"
-        "Kim Mafiya ekanini shaxsiy xabarda (bot bilan) tanlang!\n"
-        "⚠️ Ovoz berilgach uni bekor qilib bo'lmaydi.\n\n"
-        f"0/{len(alive)} ovoz berdi.",
-        reply_markup=_dm_entry_kb(bot_username, "🗳️ Ovoz berish (DM)", chat_id, "vote"),
+        f"Aybdorlarni aniqlash va jazolash vaqti keldi.\n\n"
+        f"Ovoz berish uchun {settings.vote_secs} sekund",
+        reply_markup=vote_inline_kb,
     )
     game.vote_msg_id = msg.message_id
     game.joker_pick = None  # reset target's choice for this vote
@@ -451,8 +471,8 @@ async def _do_vote_resolution(bot: Bot, game: Game):
     if eliminated_id is None:
         await bot.send_message(
             game.chat_id,
-            f"🗳️ *Ovoz natijalari — {game.day_number}-kun:*\n{summary}\n\n"
-            "⚖️ *Tenglashdi!* Bugun hech kim chiqarilmadi.\n\n🌙 Kecha tushdi...",
+            "Ovoz berish natijalari:\n\n"
+            "⚖️ Tenglashdi! Bugun hech kim chiqarilmadi.\n\n🌙 Kecha tushdi...",
         )
         game.day_number += 1
         await run_night(bot, game.chat_id)
@@ -476,8 +496,8 @@ async def _do_vote_resolution(bot: Bot, game: Game):
         await save_profile(ep)
         await bot.send_message(
             game.chat_id,
-            f"🗳️ *Ovoz natijalari — {game.day_number}-kun:*\n{summary}\n\n"
-            f"⚖️ *{eliminated.display_name}* osishdan himoya ishlatdi va omon qoldi! "
+            f"Ovoz berish natijalari:\n\n"
+            f"🛡️ {eliminated.display_name} osishdan himoya ishlatdi va omon qoldi! "
             f"(Qolgan himoya: {ep.hang_protect})",
         )
         game.day_number += 1
@@ -488,8 +508,8 @@ async def _do_vote_resolution(bot: Bot, game: Game):
         game.eliminate_player(eliminated_id)
         await bot.send_message(
             game.chat_id,
-            f"🗳️ *Ovoz natijalari — {game.day_number}-kun:*\n{summary}\n\n"
-            f"💣 *{eliminated.display_name}* osib o'ldirildi! Roli: {emoji} *{role_name}*\n\n"
+            f"Ovoz berish natijalari:\n\n"
+            f"{eliminated.display_name} osildi.\n{emoji} {role_name}\n\n"
             f"*Afsungar* birini o'zi bilan olib ketishi mumkin — 30 soniya ichida tanlang!",
             reply_markup=_target_kb(game, "afsungar_revenge", actor_id=eliminated_id),
         )
@@ -503,9 +523,13 @@ async def _do_vote_resolution(bot: Bot, game: Game):
         return
 
     game.eliminate_player(eliminated_id)
+    votes_for = counts.get(eliminated_id, 0)
+    votes_against = sum(c for tid, c in counts.items() if tid != eliminated_id)
     msg = (
-        f"🗳️ *Ovoz natijalari — {game.day_number}-kun:*\n{summary}\n\n"
-        f"☠️ *{eliminated.display_name}* chiqarildi! Roli: {emoji} *{role_name}*\n\n"
+        f"Ovoz berish natijalari:\n\n"
+        f"👍 {votes_for} | 👎 {votes_against}\n\n"
+        f"{eliminated.display_name} osildi.\n"
+        f"{emoji} {role_name}\n\n"
     )
     winner = game.check_win_condition()
     if winner:
@@ -542,10 +566,10 @@ async def _end_game(bot: Bot, game: Game, winner: str):
     losers = [p for p in game.players.values() if p.role and p.user_id not in winner_ids]
 
     def _fmt(i, p):
-        return f"  {i}. {'☠️' if not p.alive else '✅'} {p.display_name} — {ROLE_EMOJIS.get(p.role,'')} {ROLE_NAMES_UZ.get(p.role,'')}"
+        return f"{i}. {p.display_name} — {ROLE_EMOJIS.get(p.role,'')} {ROLE_NAMES_UZ.get(p.role,'')}"
 
-    winners_list = "\n".join(_fmt(i, p) for i, p in enumerate(winners, 1)) or "  —"
-    losers_list = "\n".join(_fmt(i, p) for i, p in enumerate(losers, 1)) or "  —"
+    winners_list = "\n".join(_fmt(i, p) for i, p in enumerate(winners, 1)) or "—"
+    losers_list = "\n".join(_fmt(i, p) for i, p in enumerate(losers, 1)) or "—"
 
     WIN_REWARD = 30
     win_rewards: dict = {}
@@ -562,19 +586,24 @@ async def _end_game(bot: Bot, game: Game, winner: str):
     for p in losers:
         await record_game_result(game.chat_id, p.user_id, p.first_name, won=False, points=RATING_LOSS_POINTS)
 
-    reward_text = f"\n💵 *G'oliblarga mukofot berildi!*" if winners else ""
+    reward_text = "\n\n💵 G'oliblarga mukofot berildi!" if winners else ""
 
     newgame_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎮 Yangi o'yin boshlash", callback_data=f"newgame_btn:{game.chat_id}")]
     ])
 
-    await bot.send_message(
-        game.chat_id,
-        f"{em} *O'YIN TUGADI!*\n\n{text}\n\n"
-        f"🏆 *G'oliblar:*\n{winners_list}\n\n"
-        f"💀 *Mag'lublar:*\n{losers_list}{reward_text}",
-        reply_markup=newgame_kb,
+    duration_secs = int(time.time() - (game.started_at or time.time()))
+    mins, secs_rem = divmod(duration_secs, 60)
+    duration_str = f"{mins}m {secs_rem}s" if mins else f"{secs_rem}s"
+
+    end_text = (
+        f"O'yin tugadi!\n\n"
+        f"G'oliblar:\n{winners_list}\n\n"
+        f"Qolgan o'yinchilar:\n{losers_list}\n\n"
+        f"O'yin davomiyligi: {duration_str}"
+        f"{reward_text}"
     )
+    await bot.send_message(game.chat_id, end_text, reply_markup=newgame_kb)
 
     for p in winners:
         reward = win_rewards.get(p.user_id, WIN_REWARD)
@@ -859,6 +888,21 @@ async def cmd_start(msg: Message, bot: Bot):
 
         if payload.startswith("join_"):
             return await _handle_private_join(msg, bot, payload)
+
+        if payload.startswith("vote_"):
+            try:
+                cid = int(payload.split("_", 1)[1])
+                game = games.get(cid)
+                if game and game.phase == Phase.VOTING:
+                    p = game.get_player_by_id(msg.from_user.id)
+                    if p and p.alive:
+                        await msg.answer(
+                            "🗳️ *Ovoz berish vaqti!*\n\nKim Mafiya ekanini o'ylab, tanlang:",
+                            reply_markup=_vote_kb(game, msg.from_user.id),
+                        )
+                        return
+            except Exception:
+                pass
 
         if payload.startswith("group_"):
             try:
@@ -1580,6 +1624,8 @@ async def _launch_game(msg: Message, bot: Bot):
     for player in game.players.values():
         await record_game_start(player.user_id, player.first_name)
 
+    game.started_at = time.time()
+
     await msg.answer(
         f"🟢 *O'YIN BOSHLANDI!*\n\n"
         f"🎭 Rollar taqsimlanmoqda...\n\n"
@@ -1614,6 +1660,23 @@ async def _launch_game(msg: Message, bot: Bot):
             extra = ""
         await _dm(bot, player.user_id,
             f"🎭 *Sizning rolingiz: {em} {name}*\n\n{desc}{extra}\n\nO'yin boshlandi!", group_kb)
+
+    # Komissar ↔ Serjant mutual reveal at game start
+    komissar_p = game.get_alive_by_role(Role.KOMISSAR)
+    serzhant_p = game.get_alive_by_role(Role.SERZHANT)
+    if komissar_p and serzhant_p:
+        await _dm(bot, komissar_p.user_id,
+            f"🤝 *Sheriklaring (Serjant):* {serzhant_p.display_name}\n\n"
+            "Botga yozgan xabarlaringiz faqat sherigingizga ko'rinadi.")
+        await _dm(bot, serzhant_p.user_id,
+            f"🤝 *Sheriklaring (Komissar):* {komissar_p.display_name}\n\n"
+            "Botga yozgan xabarlaringiz faqat sherigingizga ko'rinadi.")
+    elif komissar_p:
+        await _dm(bot, komissar_p.user_id,
+            "ℹ️ Bu o'yinda Serjant yo'q.")
+    elif serzhant_p:
+        await _dm(bot, serzhant_p.user_id,
+            "ℹ️ Bu o'yinda Komissar yo'q.")
 
     asyncio.create_task(run_night(bot, chat_id))
 
@@ -3035,3 +3098,73 @@ async def auto_delete_handler(msg: Message, bot: Bot):
             await bot.delete_message(chat_id, msg.message_id)
         except Exception:
             pass
+
+
+# ──────────────────────────────────────────────
+# Private team-chat relay
+# (non-command private messages during active game)
+# ──────────────────────────────────────────────
+
+_SHERIF_ROLES = {Role.KOMISSAR, Role.SERZHANT}
+_MAFIA_CHAT_ROLES = {r for r in MAFIA_TEAM if r != Role.LABARANT}
+
+
+@router.message(F.chat.type == "private")
+async def _private_team_relay(msg: Message, bot: Bot):
+    # Skip commands — let dedicated handlers process them
+    if not msg.text or msg.text.startswith("/"):
+        return
+
+    uid = msg.from_user.id if msg.from_user else None
+    if not uid:
+        return
+
+    # Find the player's active game
+    player_game: Optional[Game] = None
+    sender_player = None
+    for g in games.values():
+        if g.phase in (Phase.LOBBY, Phase.ENDED):
+            continue
+        p = g.get_player_by_id(uid)
+        if p and p.alive and p.role:
+            player_game = g
+            sender_player = p
+            break
+
+    if not player_game or not sender_player:
+        return
+
+    role = sender_player.role
+    sender_name = player_game.get_display_name(sender_player)
+
+    # Determine teammates for this role
+    if role in _SHERIF_ROLES:
+        teammates = [
+            p for p in player_game.alive_players()
+            if p.role in _SHERIF_ROLES and p.user_id != uid
+        ]
+    elif role in _MAFIA_CHAT_ROLES:
+        teammates = [
+            p for p in player_game.alive_players()
+            if p.role in _MAFIA_CHAT_ROLES and p.user_id != uid
+        ]
+    else:
+        return  # Solo role — no team chat
+
+    if not teammates:
+        await msg.answer("⚠️ Hozir faol sheriklari yo'q.")
+        return
+
+    relay_text = f"💬 *{sender_name}:*\n{msg.text}"
+    sent = 0
+    for t in teammates:
+        try:
+            await bot.send_message(t.user_id, relay_text, parse_mode="Markdown")
+            sent += 1
+        except Exception:
+            pass
+
+    if sent:
+        await msg.answer("✅ Sheriklaingizga yetkazildi.")
+    else:
+        await msg.answer("⚠️ Sheriklaringizga xabar yetkazib bo'lmadi.")

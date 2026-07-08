@@ -203,6 +203,7 @@ class Game:
     afk_counters: dict = field(default_factory=dict)       # user_id -> consecutive missed nights
     night_acted_uids: set = field(default_factory=set)     # who submitted this night
     night_required_snapshot: set = field(default_factory=set)  # required actors at night start
+    started_at: Optional[float] = None                     # epoch time when game started
 
     def add_player(self, user_id: int, username: str, first_name: str, last_name: str = "") -> bool:
         if user_id in self.players or len(self.players) >= MAX_PLAYERS:
