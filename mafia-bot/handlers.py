@@ -1744,12 +1744,7 @@ async def _launch_game(msg: Message, bot: Bot):
 
     game.started_at = time.time()
 
-    await msg.answer(
-        f"🟢 *O'YIN BOSHLANDI!*\n\n"
-        f"🎭 Rollar taqsimlanmoqda...\n\n"
-        "Shaxsiy xabaringizni tekshiring!\n"
-        "⚠️ Agar DM kelmasa — botga /start yozing!",
-    )
+    await msg.answer(f"🟢 *O'YIN BOSHLANDI!*")
 
     group_kb = None
     if game.group_link:
@@ -3018,8 +3013,6 @@ async def cb_dvote(call: CallbackQuery, bot: Bot):
                 chat_id=cid, message_id=game.vote_msg_id,
                 text=(
                     f"🗳️ *OVOZ BERISH BOSHLANDI!*\n\n"
-                    "Kim Mafiya ekanini shaxsiy xabarda (bot bilan) tanlang!\n"
-                    "⚠️ Ovoz berilgach uni bekor qilib bo'lmaydi.\n\n"
                     f"{voted}/{alive} ovoz berdi."
                 ),
             )
@@ -3197,13 +3190,21 @@ async def cb_qar_t(call: CallbackQuery):
 # Auto-delete dead/spectator messages
 # ──────────────────────────────────────────────
 
-@router.message(F.chat.type.in_({"group", "supergroup"}))
+def _is_not_command(msg: Message) -> bool:
+    """True unless the message is a bot command.
+
+    Used to keep the catch-all group/private handlers below from matching
+    (and thereby swallowing) commands — including ones only registered on
+    other routers, like /vsgame. Without this, aiogram stops propagating
+    an update once ANY handler's filters match, so an unfiltered catch-all
+    would prevent commands defined elsewhere from ever being reached.
+    """
+    return not (msg.text and msg.text.startswith("/"))
+
+
+@router.message(F.chat.type.in_({"group", "supergroup"}), _is_not_command)
 async def auto_delete_handler(msg: Message, bot: Bot):
     """Auto-delete messages from dead players and spectators during active game."""
-    # Check if bot command — don't delete commands
-    if msg.text and msg.text.startswith("/"):
-        return
-
     chat_id = msg.chat.id
     settings = await get_settings(chat_id)
     if not settings.auto_delete_dead:
@@ -3248,12 +3249,8 @@ _SHERIF_ROLES = {Role.KOMISSAR, Role.SERZHANT}
 _MAFIA_CHAT_ROLES = {r for r in MAFIA_TEAM if r != Role.LABARANT}
 
 
-@router.message(F.chat.type == "private")
+@router.message(F.chat.type == "private", _is_not_command)
 async def _private_team_relay(msg: Message, bot: Bot):
-    # Skip commands — let dedicated handlers process them
-    if not msg.text or msg.text.startswith("/"):
-        return
-
     uid = msg.from_user.id if msg.from_user else None
     if not uid:
         return

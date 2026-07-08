@@ -229,8 +229,7 @@ async def _launch_vs_game(msg: Message, bot: Bot, game: Game):
         chat_id,
         f"⚔️ *VS MODE BOSHLANDI!*\n\n"
         f"🔴 Qizil jamoa: {len(game.vs_red_team)} o'yinchi\n"
-        f"🔵 Ko'k jamoa: {len(game.vs_blue_team)} o'yinchi\n\n"
-        f"Rollar taqsimlanmoqda — shaxsiy xabaringizni tekshiring!",
+        f"🔵 Ko'k jamoa: {len(game.vs_blue_team)} o'yinchi",
         parse_mode="Markdown",
     )
 

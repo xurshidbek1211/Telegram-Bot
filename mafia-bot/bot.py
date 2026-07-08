@@ -42,8 +42,14 @@ async def main():
 
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
     dp = Dispatcher()
-    dp.include_router(router)
+    # vs_router must be included BEFORE the general router: handlers.router
+    # registers catch-all group/private message handlers (auto-delete,
+    # team-chat relay) that match every message, including unrecognised
+    # commands like /vsgame. If router were checked first, those catch-alls
+    # would swallow the update and vs_router's Command("vsgame") handler
+    # would never run.
     dp.include_router(vs_router)
+    dp.include_router(router)
 
     port = os.environ.get("PORT")
     if port:
