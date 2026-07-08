@@ -16,7 +16,7 @@ class Role(Enum):
     KOMISSAR = "Komissar Katani"
     DOCTOR = "Doktor"
     SERZHANT = "Serjant"
-    CITIZEN = "Tinch Axoli"
+    CITIZEN = "Tinch Aholi"
     DAYDI = "Daydi"
     KEZUVCHI = "Kezuvchi"
     OMADLI = "Omadli"
@@ -35,6 +35,13 @@ class Role(Enum):
     TULKI = "Tulki"
     LABARANT = "Labarant"
     QAROQCHI = "Qaroqchi"
+    # Restored roles
+    # CITIZEN and OMADLI were already defined above
+    # New roles
+    HAMSHIRA = "Hamshira"
+    RAIS = "Rais"
+    AYGOQCHI = "Ayg'oqchi"
+    KOLDUN = "Koldun"
 
 
 class Phase(Enum):
@@ -45,9 +52,11 @@ class Phase(Enum):
     ENDED = "ended"
 
 
-MAFIA_TEAM = {Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST, Role.LABARANT}
+MAFIA_TEAM = {Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.JURNALIST,
+              Role.LABARANT, Role.AYGOQCHI}
 CITIZEN_TEAM = {Role.KOMISSAR, Role.DOCTOR, Role.SERZHANT, Role.CITIZEN,
-                Role.DAYDI, Role.KEZUVCHI, Role.OMADLI, Role.ADMIRAL, Role.SOTQIN, Role.KONCHI}
+                Role.DAYDI, Role.KEZUVCHI, Role.OMADLI, Role.ADMIRAL, Role.SOTQIN,
+                Role.KONCHI, Role.HAMSHIRA}
 
 ROLE_EMOJIS = {
     Role.DON: "🤵🏻", Role.MAFIA: "🤵🏼", Role.YOLLANMA_QOTIL: "🥷",
@@ -60,6 +69,8 @@ ROLE_EMOJIS = {
     Role.SEHRGAR: "🧙‍", Role.GAZABKOR: "🧟", Role.JOKER: "🤡",
     Role.KIMYOGAR: "👨‍🔬", Role.MINIOR: "☠️", Role.KONCHI: "⛏️", Role.TULKI: "🦊",
     Role.LABARANT: "🧪", Role.QAROQCHI: "🏴‍☠️",
+    # New roles
+    Role.HAMSHIRA: "👩🏼‍⚕️", Role.RAIS: "💰", Role.AYGOQCHI: "🦇", Role.KOLDUN: "🧙",
 }
 
 ROLE_DESCRIPTIONS_UZ = {
@@ -90,6 +101,11 @@ ROLE_DESCRIPTIONS_UZ = {
     Role.TULKI: "Har tun 1 o'yinchini tanlaysiz. Tinch aholi bo'lsa → *Serjant*ga, Mafiya bo'lsa → *Mafiya*ga, mustaqil bo'lsa → *Qotil*ga aylanasiz!",
     Role.LABARANT: "Mafiya tomonida o'ynaysiz, lekin Mafiya sizni tanimaydi! Har tun birini tanlaysiz: Mafiya a'zosi bo'lsa — himoya qilasiz, tinch aholi yoki mustaqil bo'lsa — o'ldirasiz.\n⚠️ Mafiya sizni otsa — omon qolasiz, lekin Komissar yoki Kimyogar otsa — o'lasiz.",
     Role.QAROQCHI: "Erkin rol! Har kecha faqat *1 ta amal* tanlaysiz:\n💰 *Pul o'g'irlash* — O'yinchidan 50–100$ o'g'irlaysiz. Puli kam bo'lsa, uning 50% joni ketadi.\n⚔️ *Jon olish* — O'yinchining 50% joni ketadi. Jon 0% ga tushsa o'ladi.",
+    # New roles
+    Role.HAMSHIRA: "🔵 Fuqarolar jamoasi. Doktor tirik ekan — dam olasiz. *Doktor vafot etsa*, siz avtomatik ravishda *Doktorga aylanasiz* va uning barcha imkoniyatlarini olasiz!",
+    Role.RAIS: "⚪ Mustaqil. Har kecha 1 nafar o'yinchini tanlaysiz va unga *50–100$ va 20% ehtimol bilan 1–2 Almas* yuborasiz. O'yin oxirigacha *tirik qolsangiz g'alaba!*",
+    Role.AYGOQCHI: "🔴 Mafiya jamoasi. Har kecha 1 nafar o'yinchini tanlaysiz va uning *aniq rolini bilib olasiz*. Natija Mafiya jamoasiga yuboriladi. Hech kimni o'ldirmaysiz.",
+    Role.KOLDUN: "⚪ Mustaqil. Har kecha 1 nafar o'yinchini tanlaysiz:\n🔵 *Fuqaro bo'lsa* — ertangi osilishdan himoyalanadi.\n🔴 *Mafiya yoki Mustaqil bo'lsa* — shu kechasi halok bo'ladi.\nDoktor himoyasi saqlanadi.",
 }
 
 MIN_PLAYERS = 4
@@ -101,6 +117,10 @@ _ROLE_INTRO_ORDER = [
     Role.YOLLANMA_QOTIL, Role.ADMIRAL, Role.KONCHI, Role.QOTIL, Role.BO_RI,
     Role.AFSUNGAR, Role.AFERIST, Role.SOTQIN, Role.LABARANT, Role.SEHRGAR,
     Role.GAZABKOR, Role.JOKER, Role.KIMYOGAR, Role.MINIOR, Role.QAROQCHI,
+    # Restored roles
+    Role.CITIZEN, Role.OMADLI,
+    # New roles
+    Role.HAMSHIRA, Role.RAIS, Role.AYGOQCHI, Role.KOLDUN,
 ]
 
 
@@ -117,7 +137,7 @@ def _build_role_distribution() -> dict:
 
 ROLE_DISTRIBUTION = _build_role_distribution()
 
-_DISABLED_ROLE_FILLER = Role.DAYDI
+_DISABLED_ROLE_FILLER = Role.CITIZEN
 
 
 def get_role_list(player_count: int, disabled_roles: Optional[set] = None) -> list:
@@ -184,7 +204,7 @@ class Game:
     advokat_protected: Optional[int] = None
     sehrgar_pending: dict = field(default_factory=dict)
     konchi_rewards: dict = field(default_factory=dict)
-    konchi_morning_msg: Optional[str] = None   # Konchi tunda nima topgani
+    konchi_morning_msg: Optional[str] = None
     hang_confirm_votes: dict = field(default_factory=dict)
     hang_confirm_msg_id: Optional[int] = None
     komissar_found_mafia: Optional[dict] = None
@@ -195,15 +215,21 @@ class Game:
     money_drops: dict = field(default_factory=dict)
     lobby_msg_id: Optional[int] = None
     komissar_investigations: dict = field(default_factory=dict)
-    # Joker card game (set during night, resolved during voting)
-    joker_pending: Optional[dict] = None  # {cards: list, target: uid, death_index: int, shuffled: list}
-    joker_card_msg_id: Optional[int] = None  # message id sent to target during voting
-    joker_pick: Optional[int] = None  # card index chosen by target, or None if not chosen
+    # Joker card game
+    joker_pending: Optional[dict] = None
+    joker_card_msg_id: Optional[int] = None
+    joker_pick: Optional[int] = None
     # AFK tracking
-    afk_counters: dict = field(default_factory=dict)       # user_id -> consecutive missed nights
-    night_acted_uids: set = field(default_factory=set)     # who submitted this night
-    night_required_snapshot: set = field(default_factory=set)  # required actors at night start
-    started_at: Optional[float] = None                     # epoch time when game started
+    afk_counters: dict = field(default_factory=dict)
+    night_acted_uids: set = field(default_factory=set)
+    night_required_snapshot: set = field(default_factory=set)
+    started_at: Optional[float] = None
+    # Koldun hang protection (set at night, checked during voting)
+    koldun_protected: set = field(default_factory=set)
+    # VS Mode fields
+    vs_mode: bool = False
+    vs_red_team: set = field(default_factory=set)   # initial red team user_ids
+    vs_blue_team: set = field(default_factory=set)  # initial blue team user_ids
 
     def add_player(self, user_id: int, username: str, first_name: str, last_name: str = "") -> bool:
         if user_id in self.players or len(self.players) >= MAX_PLAYERS:
@@ -252,6 +278,7 @@ class Game:
         self.hang_confirm_votes = {}
         self.komissar_found_mafia = None
         self.night_acted_uids = set()
+        self.koldun_protected = set()
         # Snapshot required actors for AFK tracking
         self.night_required_snapshot = self.required_night_actors()
 
@@ -272,7 +299,7 @@ class Game:
                      Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.DAYDI, Role.JURNALIST,
                      Role.AFERIST, Role.MINIOR, Role.KIMYOGAR, Role.GAZABKOR,
                      Role.JOKER, Role.SOTQIN, Role.TULKI, Role.LABARANT, Role.QAROQCHI,
-                     Role.KONCHI]:
+                     Role.KONCHI, Role.RAIS, Role.AYGOQCHI, Role.KOLDUN]:
             p = self.get_alive_by_role(role)
             if p:
                 required.add(p.user_id)
@@ -299,6 +326,19 @@ class Game:
 
     def check_win_condition(self) -> Optional[str]:
         alive = self.alive_players()
+
+        # VS Mode: check team elimination
+        if self.vs_mode:
+            red_alive = any(p.user_id in self.vs_red_team for p in alive)
+            blue_alive = any(p.user_id in self.vs_blue_team for p in alive)
+            if not red_alive and blue_alive:
+                return "vs_blue"
+            if not blue_alive and red_alive:
+                return "vs_red"
+            if not red_alive and not blue_alive:
+                return "vs_draw"
+            return None
+
         mafia_count = sum(1 for p in alive if p.role in MAFIA_TEAM or p.role == Role.LABARANT)
         citizen_count = sum(1 for p in alive if p.role not in MAFIA_TEAM and p.role not in (Role.QOTIL, Role.LABARANT))
         qotil = self.get_alive_by_role(Role.QOTIL)

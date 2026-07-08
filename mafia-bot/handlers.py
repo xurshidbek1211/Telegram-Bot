@@ -32,7 +32,7 @@ ROLE_NAMES_UZ = {
     Role.YOLLANMA_QOTIL: "Yollanma Qotil", Role.ADVOKAT: "Advokat",
     Role.JURNALIST: "Jurnalist", Role.KOMISSAR: "Komissar Katani",
     Role.DOCTOR: "Doktor", Role.SERZHANT: "Serjant",
-    Role.CITIZEN: "Tinch Axoli",
+    Role.CITIZEN: "Tinch Aholi",
     Role.DAYDI: "Daydi", Role.KEZUVCHI: "Kezuvchi",
     Role.OMADLI: "Omadli", Role.ADMIRAL: "Admiral",
     Role.SOTQIN: "Sotqin", Role.QOTIL: "Qotil",
@@ -43,20 +43,25 @@ ROLE_NAMES_UZ = {
     Role.MINIOR: "Minior", Role.KONCHI: "Konchi",
     Role.TULKI: "Tulki", Role.LABARANT: "Labarant",
     Role.QAROQCHI: "Qaroqchi",
+    # New roles
+    Role.HAMSHIRA: "Hamshira", Role.RAIS: "Rais",
+    Role.AYGOQCHI: "Ayg'oqchi", Role.KOLDUN: "Koldun",
 }
 
 PASSIVE_NIGHT_ROLES = {
     Role.CITIZEN, Role.OMADLI,
     Role.BO_RI, Role.AFSUNGAR, Role.SEHRGAR, Role.ADMIRAL,
+    Role.HAMSHIRA,  # passive while Doctor is alive; auto-becomes Doctor when Doctor dies
 }
 
 PASSIVE_MESSAGES = {
-    Role.CITIZEN:  "👨🏼 Siz *Tinch Axoli*siz. Dam oling — ertaga shahar himoyangizga muhtoj!",
+    Role.CITIZEN:  "👨🏼 Siz *Tinch Aholi*siz. Dam oling — ertaga shahar himoyangizga muhtoj!",
     Role.OMADLI:   "🤞🏼 Siz *Omadli*siz. Kechasi nishonga olinsangiz 50% ehtimolda omon qolasiz!",
     Role.BO_RI:    "🐺 Siz *Bo'ri*siz. Dam oling — kimning qo'lidan o'lishingiz kelajagingizni belgilaydi!",
     Role.AFSUNGAR: "💣 Siz *Afsungar*siz. Kechasi o'ldirilsangiz, o'ldirgan ham halok bo'ladi!",
     Role.SEHRGAR:  "🧙‍ Siz *Sehrgar*siz. Don/Qotil/Komissar hujumida siz xabar olasiz va tanlov berasiz.",
-    Role.ADMIRAL:  "🧑🏻‍✈️ Siz *Admiral*siz. Komissar+Serjant tirik ekan — o'lmasсиз. Ikkovi o'lsa Komissar bo'lasiz.",
+    Role.ADMIRAL:  "🧑🏻‍✈️ Siz *Admiral*siz. Komissar+Serjant tirik ekan — o'lmaysiz. Ikkovi o'lsa Komissar bo'lasiz.",
+    Role.HAMSHIRA: "👩🏼‍⚕️ Siz *Hamshira*siz. Doktor tirik ekan, dam olasiz. Doktor vafot etsa — siz *Doktorga aylanasiz!*",
 }
 
 # ──────────────────────────────────────────────
@@ -490,6 +495,18 @@ async def _do_vote_resolution(bot: Bot, game: Game):
             await run_night(bot, game.chat_id)
             return
 
+    # Check Koldun hang protection (game-state protection from Koldun's night action)
+    if eliminated_id in game.koldun_protected:
+        game.koldun_protected.discard(eliminated_id)
+        await bot.send_message(
+            game.chat_id,
+            f"Ovoz berish natijalari:\n\n"
+            f"🧙 *Koldun* himoyasi ishladi! *{eliminated.display_name}* osilishdan qutuldi!",
+        )
+        game.day_number += 1
+        await run_night(bot, game.chat_id)
+        return
+
     ep = await get_profile(eliminated_id)
     if ep.hang_protect > 0:
         ep.hang_protect -= 1
@@ -546,6 +563,12 @@ async def _end_game(bot: Bot, game: Game, winner: str):
     game.phase = Phase.ENDED
     game.winner = winner
     game.cancel_phase_task()
+
+    # VS Mode: delegate to vs_game module
+    if game.vs_mode:
+        from vs_game import end_vs_game
+        await end_vs_game(bot, game, winner)
+        return
 
     msgs = {
         "citizens": ("🏆", "🎉 *Fuqarolar g'alaba qozondi!* Barcha Mafiya yo'q qilindi!"),
@@ -859,6 +882,31 @@ async def _send_night_actions(bot: Bot, game: Game):
                 f"🌙 *{game.day_number}-kecha*\n\n"
                 f"🏴‍☠️ *Qaroqchi:* Bu kecha faqat *1 ta amal* tanlaysiz.\n\n"
                 f"Amal tanlang ({secs}s):", kb)
+
+        elif role == Role.RAIS:
+            kb = _target_kb(game, "nrais", actor_id=uid)
+            await _dm(bot, uid,
+                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"💰 *Rais:* Bu kecha sovg'a yuborish uchun o'yinchini tanlang.\n"
+                f"50–100$ va 20% ehtimol bilan 1–2 Almas yuboriladi ({secs}s):", kb)
+
+        elif role == Role.AYGOQCHI:
+            kb = _target_kb(game, "naygoychi", actor_id=uid)
+            # Ayg'oqchi is visible to Mafia team
+            allies = [p.display_name for p in alive if p.role in MAFIA_TEAM
+                      and p.role != Role.LABARANT and p.user_id != uid]
+            ally_txt = f"\n🤝 Mafiya jamoasi: {', '.join(allies)}" if allies else ""
+            await _dm(bot, uid,
+                f"🌙 *{game.day_number}-kecha*{ally_txt}\n\n"
+                f"🦇 *Ayg'oqchi:* Kimning rolini bilib olmoqchisiz ({secs}s)?", kb)
+
+        elif role == Role.KOLDUN:
+            kb = _target_kb(game, "nkoldun", actor_id=uid)
+            await _dm(bot, uid,
+                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"🧙 *Koldun:* O'yinchi tanlang:\n"
+                f"🔵 Fuqaro bo'lsa → osilishdan himoyalanadi\n"
+                f"🔴 Mafiya/Mustaqil bo'lsa → kechasi halok bo'ladi ({secs}s):", kb)
 
         elif role in PASSIVE_NIGHT_ROLES:
             await _dm(bot, uid,
@@ -1186,15 +1234,19 @@ async def cmd_utag(msg: Message, bot: Bot):
 
 
 TOGGLEABLE_ROLES = [
-    r for r in Role if r not in (Role.CITIZEN, Role.OMADLI, Role.DON, Role.MAFIA)
+    r for r in Role if r not in (Role.DON, Role.MAFIA)
 ]
 
 DURATION_OPTIONS = [15, 30, 45, 60, 90]
 
 RCFG_MIN_COUNT = 4
 RCFG_MAX_COUNT = 30
+
+# Roles that can be added in multiple copies (with ➕/➖ counter, default 0)
+COUNTABLE_RCFG_ROLES = [Role.SERZHANT, Role.TULKI, Role.QOTIL, Role.AFSUNGAR, Role.CITIZEN]
+
 RCFG_TOGGLE_ROLES = [
-    r for r in Role if r not in (Role.CITIZEN, Role.OMADLI, Role.DON, Role.MAFIA)
+    r for r in Role if r not in (Role.DON, Role.MAFIA) and r not in COUNTABLE_RCFG_ROLES
 ]
 
 _rcfg_sessions: dict[int, dict] = {}
@@ -1253,23 +1305,48 @@ def _rcfg_counts_kb(chat_id: int, settings: ChatSettings, page: int = 0) -> Inli
 
 def _rcfg_session_total(session: dict) -> int:
     # 1 Don + mafia_extra Mafias + selected other roles
-    return 1 + session["mafia_extra"] + len(session["roles"])
+    roles = session["roles"]
+    if isinstance(roles, dict):
+        return 1 + session["mafia_extra"] + sum(roles.values())
+    return 1 + session["mafia_extra"] + len(roles)
 
 
 def _rcfg_editor_kb(chat_id: int, session: dict, page: int = 0) -> InlineKeyboardMarkup:
-    per_page = 6
+    per_page = 5
     start = page * per_page
     roles_page = RCFG_TOGGLE_ROLES[start:start + per_page]
     mafia_count = session["mafia_extra"]
-    rows = [[
-        InlineKeyboardButton(text="➖", callback_data=f"soz:rcfgm:dec:{page}:{chat_id}"),
-        InlineKeyboardButton(text=f"{ROLE_EMOJIS[Role.MAFIA]} Mafiya: {mafia_count}", callback_data="noop"),
-        InlineKeyboardButton(text="➕", callback_data=f"soz:rcfgm:inc:{page}:{chat_id}"),
-    ]]
+
+    # Normalize roles to dict
+    roles_dict = session["roles"] if isinstance(session["roles"], dict) else {r: 1 for r in session["roles"]}
+
+    rows = [
+        # Mafia counter row
+        [
+            InlineKeyboardButton(text="➖", callback_data=f"soz:rcfgm:dec:{page}:{chat_id}"),
+            InlineKeyboardButton(text=f"{ROLE_EMOJIS[Role.MAFIA]} Mafia: {mafia_count}", callback_data="noop"),
+            InlineKeyboardButton(text="➕", callback_data=f"soz:rcfgm:inc:{page}:{chat_id}"),
+        ]
+    ]
+
+    # Countable roles rows (with ➕/➖ per role)
+    for r in COUNTABLE_RCFG_ROLES:
+        count = roles_dict.get(r.name, 0)
+        em = ROLE_EMOJIS.get(r, "")
+        nm = ROLE_NAMES_UZ.get(r, r.value)
+        rows.append([
+            InlineKeyboardButton(text="➖", callback_data=f"soz:rcfgcr:dec:{r.name}:{page}:{chat_id}"),
+            InlineKeyboardButton(text=f"{em} {nm}: {count}", callback_data="noop"),
+            InlineKeyboardButton(text="➕", callback_data=f"soz:rcfgcr:inc:{r.name}:{page}:{chat_id}"),
+        ])
+
+    # Toggle roles rows (on/off)
     for r in roles_page:
-        on = r.name in session["roles"]
+        count = roles_dict.get(r.name, 0)
+        on = count > 0
         label = f"{'✅' if on else '❌'} {ROLE_EMOJIS.get(r,'')} {ROLE_NAMES_UZ.get(r, r.value)}"
         rows.append([InlineKeyboardButton(text=label, callback_data=f"soz:rcfgr:{r.name}:{page}:{chat_id}")])
+
     nav = []
     if start > 0:
         nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"soz:rcfge:{page-1}:{chat_id}"))
@@ -1277,10 +1354,12 @@ def _rcfg_editor_kb(chat_id: int, session: dict, page: int = 0) -> InlineKeyboar
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"soz:rcfge:{page+1}:{chat_id}"))
     if nav:
         rows.append(nav)
+
     total = _rcfg_session_total(session)
     target = session["count"]
     status = "✅" if total == target else "⚠️"
     rows.append([InlineKeyboardButton(text=f"{status} Jami: {total}/{target}", callback_data="noop")])
+
     save_row = []
     if total == target:
         save_row.append(InlineKeyboardButton(text="💾 Saqlash", callback_data=f"soz:rcfgs:{page}:{chat_id}"))
@@ -1473,11 +1552,19 @@ async def cb_sozlash(call: CallbackQuery):
         count, page = int(parts[2]), int(parts[3])
         existing = settings.custom_role_configs.get(str(count))
         if existing:
-            roles = {name for name, qty in existing.items() if name not in ("DON", "MAFIA") and qty}
-            # New format: MAFIA value = direct count (0 = no extra mafias)
-            mafia_extra = max(0, existing.get("MAFIA", 0))
+            # Normalize legacy format: MAFIA value was stored as count (1 = 1 extra Mafia).
+            # Any value > 1 or 0 is already the correct "extra mafias" count.
+            # Normalize: if MAFIA is stored as bool/1, treat as "1 extra Mafia".
+            raw_mafia = existing.get("MAFIA", 0)
+            mafia_extra = max(0, int(raw_mafia))
+            roles = {name: int(qty) for name, qty in existing.items()
+                     if name not in ("DON", "MAFIA") and int(qty) > 0}
+            # Ensure countable roles are in dict with their counts (default 0)
+            for r in COUNTABLE_RCFG_ROLES:
+                if r.name not in roles:
+                    roles[r.name] = 0
         else:
-            roles = set()
+            roles = {r.name: 0 for r in COUNTABLE_RCFG_ROLES}
             mafia_extra = 0  # Default: 0 Mafias (only Don)
         session = {"chat_id": chat_id, "count": count, "roles": roles, "mafia_extra": mafia_extra}
         _rcfg_sessions[call.from_user.id] = session
@@ -1506,12 +1593,37 @@ async def cb_sozlash(call: CallbackQuery):
         session = _rcfg_sessions.get(call.from_user.id)
         if not session or session["chat_id"] != chat_id:
             return await call.answer("⚠️ Sessiya topilmadi, qaytadan boshlang.", show_alert=True)
-        if role_name in session["roles"]:
-            session["roles"].discard(role_name)
+        roles = session["roles"]
+        if not isinstance(roles, dict):
+            roles = {r: 1 for r in roles}
+            session["roles"] = roles
+        current = roles.get(role_name, 0)
+        if current > 0:
+            roles[role_name] = 0  # toggle off
         elif _rcfg_session_total(session) < session["count"]:
-            session["roles"].add(role_name)
+            roles[role_name] = 1  # toggle on
         else:
             return await call.answer("⚠️ Jami rollar soni o'yinchilar sonidan oshib ketdi.", show_alert=True)
+        await call.message.edit_text(_rcfg_editor_text(session), reply_markup=_rcfg_editor_kb(chat_id, session, page))
+
+    elif action == "rcfgcr":
+        # Countable role increment/decrement
+        direction, role_name, page = parts[2], parts[3], int(parts[4])
+        session = _rcfg_sessions.get(call.from_user.id)
+        if not session or session["chat_id"] != chat_id:
+            return await call.answer("⚠️ Sessiya topilmadi, qaytadan boshlang.", show_alert=True)
+        roles = session["roles"]
+        if not isinstance(roles, dict):
+            roles = {r: 1 for r in roles}
+            session["roles"] = roles
+        current = roles.get(role_name, 0)
+        if direction == "inc":
+            if _rcfg_session_total(session) < session["count"]:
+                roles[role_name] = current + 1
+            else:
+                return await call.answer("⚠️ Jami rollar soni o'yinchilar sonidan oshib ketdi.", show_alert=True)
+        elif direction == "dec" and current > 0:
+            roles[role_name] = current - 1
         await call.message.edit_text(_rcfg_editor_text(session), reply_markup=_rcfg_editor_kb(chat_id, session, page))
 
     elif action == "rcfgs":
@@ -1522,8 +1634,14 @@ async def cb_sozlash(call: CallbackQuery):
             return await call.answer("⚠️ Jami rollar soni mos kelmayapti.", show_alert=True)
         # Save: MAFIA = mafia_extra (can be 0)
         config = {"DON": 1, "MAFIA": session["mafia_extra"]}
-        for role_name in session["roles"]:
-            config[role_name] = 1
+        roles = session["roles"]
+        if isinstance(roles, dict):
+            for role_name, count in roles.items():
+                if count > 0:
+                    config[role_name] = count
+        else:
+            for role_name in roles:
+                config[role_name] = 1
         settings.custom_role_configs[str(session["count"])] = config
         await save_settings(settings)
         del _rcfg_sessions[call.from_user.id]
@@ -2993,6 +3111,27 @@ async def cb_nkonchi(call: CallbackQuery):
 
 
 # ── Qaroqchi night action callbacks (single action per night) ──
+
+@router.callback_query(F.data.startswith("nrais:"))
+async def cb_nrais(call: CallbackQuery):
+    _, tid, cid = call.data.split(":")
+    await _night_cb(call, Role.RAIS, int(tid), int(cid), "💰 Sovg'a manzili tanlandi",
+                    "💰 Rais kechalik sovg'asini tayyorlamoqda...")
+
+
+@router.callback_query(F.data.startswith("naygoychi:"))
+async def cb_naygoychi(call: CallbackQuery):
+    _, tid, cid = call.data.split(":")
+    await _night_cb(call, Role.AYGOQCHI, int(tid), int(cid), "🦇 Nishon tanlandi",
+                    "🦇 Ayg'oqchi qorong'ulikda ov boshladi...")
+
+
+@router.callback_query(F.data.startswith("nkoldun:"))
+async def cb_nkoldun(call: CallbackQuery):
+    _, tid, cid = call.data.split(":")
+    await _night_cb(call, Role.KOLDUN, int(tid), int(cid), "🧙 Nishon tanlandi",
+                    "🧙 Koldun sehri bilan harakat qilmoqda...")
+
 
 @router.callback_query(F.data.startswith("qar_mode:"))
 async def cb_qar_mode(call: CallbackQuery):

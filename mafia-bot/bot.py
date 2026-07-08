@@ -6,6 +6,7 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.types import BotCommand
 from handlers import router
+from vs_game import vs_router
 from database import init_db, close_db
 
 logging.basicConfig(
@@ -42,6 +43,7 @@ async def main():
     bot = Bot(token=token, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
     dp = Dispatcher()
     dp.include_router(router)
+    dp.include_router(vs_router)
 
     port = os.environ.get("PORT")
     if port:
@@ -65,6 +67,7 @@ async def main():
         BotCommand(command="sozlash", description="⚙️ Sozlamalar"),
         BotCommand(command="kanal", description="📢 Reklama kanalini sozlash (egasi)"),
         BotCommand(command="utag", description="📢 Guruh a'zolarini o'yinga chaqirish"),
+        BotCommand(command="vsgame", description="⚔️ VS Mode (Qizil vs Ko'k)"),
         BotCommand(command="help", description="❓ Yordam"),
     ])
 
