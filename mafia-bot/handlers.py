@@ -372,10 +372,10 @@ async def _do_night_resolution(bot: Bot, game: Game):
         role_nm = found_mafia['role_name']
         await bot.send_message(
             game.chat_id,
-            morning_header + f"\n\n🚨 *Komissar Mafiya jamoasi a'zosini fosh qildi!*\n\n"
-            f"👤 O'yinchi: {mention}\n"
-            f"🎭 Rol: {role_em} *{role_nm}*\n\n"
-            "⚖️ Darhol ovoz berish boshlanadi!",
+            morning_header + "\n\n🚨 *Komissar Mafia a'zosini fosh qildi!*\n\n"
+            f"👤 {mention}\n"
+            f"🎭 Roli: {role_em} *{role_nm}*\n\n"
+            "⚖️ Endi darhol osish jarayoni boshlanadi!",
         )
         await run_vote(bot, game.chat_id)
         return
