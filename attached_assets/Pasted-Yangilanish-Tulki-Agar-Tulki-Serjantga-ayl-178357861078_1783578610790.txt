@@ -1,0 +1,149 @@
+Yangilanish
+
+━━━━━━━━━━━━━━━━━━━━━━
+🦊 Tulki
+━━━━━━━━━━━━━━━━━━━━━━
+
+Agar Tulki:
+
+• 👮 Serjantga aylansa:
+  - Bu haqda faqat 🕵🏼 Komissar va barcha 👮 Serjantlarning shaxsiy chatiga xabar yuborilsin.
+  - Guruhga hech qanday xabar chiqmasin.
+
+• 🤵 Mafia jamoasiga qo'shilsa:
+  - Bu haqda faqat 🤵 Don va barcha 🔴 Mafia jamoasi a'zolarining shaxsiy chatiga xabar yuborilsin.
+  - Guruhga hech qanday xabar chiqmasin.
+
+━━━━━━━━━━━━━━━━━━━━━━
+🕵🏼 Komissar va 👮 Serjant
+━━━━━━━━━━━━━━━━━━━━━━
+
+Komissar va barcha Serjantlar bir-birini taniysin.
+
+Komissar yoki Serjant tungi harakatni tanlayotganda:
+
+- Komissar va barcha Serjantlarning ismi oldida 👮 belgisi ko'rinsin.
+
+Masalan:
+
+👮 Ali
+👮 Hasan
+Bekzod
+Aziz
+
+Bu belgilar faqat:
+
+🕵🏼 Komissar
+👮 Serjant(lar)
+
+uchun ko'rinsin.
+
+Guruhga chiqmasin.
+
+━━━━━━━━━━━━━━━━━━━━━━
+🤵 Don va Mafia jamoasi
+━━━━━━━━━━━━━━━━━━━━━━
+
+Don va barcha Mafia a'zolari bir-birini taniysin.
+
+Don yoki Mafia jamoasi a'zosi tungi harakatni tanlayotganda:
+
+- Don va barcha Mafia jamoasi a'zolarining ismi oldida 🤵 belgisi ko'rinsin.
+
+Masalan:
+
+🤵 Don Ali
+🤵 Hasan
+🤵 Bekzod
+Aziz
+
+Bu belgilar faqat:
+
+🤵 Don
+🤵 Mafia
+🥷 Yollanma Qotil
+👨🏼‍💼 Advokat
+🧪 Laborant
+🦇 Ayg'oqchi
+
+uchun ko'rinsin.
+
+Guruhga chiqmasin.
+
+━━━━━━━━━━━━━━━━━━━━━━
+🤵 Mafia ovoz berish
+━━━━━━━━━━━━━━━━━━━━━━
+
+- Agar 🤵 Don tanlov qilsa, Donning tanlovi yakuniy hisoblanadi.
+- Mafia a'zolarining tanlovi hisobga olinmaydi.
+
+Agar Don tanlamasa:
+
+- Mafia a'zolarining ovozlari hisoblanadi.
+- Eng ko'p ovoz olgan o'yinchi nishon bo'ladi.
+- Agar ovozlar teng bo'lsa:
+
+🤵 Mafia a'zolari kelisha olishmadi.
+
+Bu kecha hech kim yo'q qilinmadi.
+
+━━━━━━━━━━━━━━━━━━━━━━
+🤵 Mafia ichki xabarlari
+━━━━━━━━━━━━━━━━━━━━━━
+
+Mafia a'zosi yoki Don ovoz berganda atmosfera xabari guruhga yuborilmasin.
+
+Buning o'rniga faqat Mafia jamoasining shaxsiy chatida ko'rinsin.
+
+Masalan:
+
+🤵 Ali → Bekzodga ovoz berdi.
+
+🤵 Don → Azizni tanladi.
+
+Bu xabarni faqat:
+
+🤵 Don
+🤵 Mafia
+🥷 Yollanma Qotil
+👨🏼‍💼 Advokat
+🧪 Laborant
+🦇 Ayg'oqchi
+
+ko'ra olsin.
+
+━━━━━━━━━━━━━━━━━━━━━━
+☠️ So'nggi so'z
+━━━━━━━━━━━━━━━━━━━━━━
+
+O'yinchi halok bo'lgandan so'ng bot uning shaxsiy chatiga quyidagi xabarni yuborsin:
+
+☠️ Siz halok bo'ldingiz.
+
+📝 So'nggi so'zingizni yuborishingiz mumkin.
+
+Yuborgan xabaringiz guruhga "So'nggi so'z" sifatida chiqariladi.
+
+- O'yinchi faqat 1 marta matn yubora olsin.
+- Ikkinchi xabar qabul qilinmasin.
+- Hech narsa yubormasa, o'yin davom etsin.
+
+Guruhga quyidagi formatda yuborilsin:
+
+🕊 So'nggi so'z
+
+☠️ [Ism]:
+
+[Matn]
+
+Faqat matn qabul qilinsin.
+
+Rasm, video, GIF, stiker, ovozli xabar, fayl va boshqa media turlari qabul qilinmasin.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+Barcha o'zgarishlar `/game` va `/vsgame` rejimlarining ikkalasida ham ishlasin.
+
+Aiogram 3 va Neon PostgreSQL bilan mos ishlasin.
+
+Mavjud boshqa funksiyalar va o'yin logikasi buzilmasin.

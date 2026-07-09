@@ -65,7 +65,27 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
             if t and t in alive:
                 _record_visit(game, actor.user_id, t)
 
-    mafia_target = actions.get("mafia_kill")
+    # Mafia kill target — Don's vote is final; if Don absent, tally member votes (tie → no kill)
+    if actions.get("mafia_don_voted"):
+        mafia_target = actions.get("mafia_kill")
+    elif game.mafia_votes:
+        vote_counts: dict[int, int] = {}
+        for tid in game.mafia_votes.values():
+            if tid in alive:
+                vote_counts[tid] = vote_counts.get(tid, 0) + 1
+        if vote_counts:
+            max_v = max(vote_counts.values())
+            winners = [tid for tid, c in vote_counts.items() if c == max_v]
+            if len(winners) == 1:
+                mafia_target = winners[0]
+            else:
+                events.append("🤵 Mafia a'zolari kelisha olishmadi — bu kecha hech kim yo'q qilinmadi.")
+                mafia_target = None
+        else:
+            mafia_target = None
+    else:
+        mafia_target = actions.get("mafia_kill")  # fallback / single Don vote (legacy)
+
     if mafia_target and mafia_target in alive:
         for p in game.alive_mafia_team():
             if p.role in (Role.DON, Role.MAFIA):
@@ -427,16 +447,27 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
             else:
                 bori.alive = False
 
-    # 16a. Tulki transform (never announced to the group — private only)
+    # 16a. Tulki transform (private DM to Tulki + teammates; never to group)
     if tulki_new_role and tulki and tulki.alive:
         tulki.role = tulki_new_role
         if tulki_new_role == Role.MAFIA:
             await _dm(bot, tulki.user_id,
                 "🦊 Tanlagan nishoningiz Mafiya ekan — siz *Mafiaga aylandingiz!*\n"
                 "Keyingi tundan boshlab Mafiya bilan ishlaysiz.")
+            # Notify Don + visible Mafia teammates
+            for p in game.alive_players():
+                if p.role in (Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL,
+                               Role.ADVOKAT, Role.JURNALIST, Role.AYGOQCHI) and p.user_id != tulki.user_id:
+                    await _dm(bot, p.user_id,
+                        f"🦊 *{game.get_display_name(tulki)}* Mafiaga qo'shildi! Endi jamoadosh.")
         elif tulki_new_role == Role.SERZHANT:
             await _dm(bot, tulki.user_id,
                 "🦊 Tanlagan nishoningiz tinch aholi ekan — siz *Serjantga aylandingiz!*")
+            # Notify Komissar + all Serjants
+            for p in game.alive_players():
+                if p.role in (Role.KOMISSAR, Role.SERZHANT) and p.user_id != tulki.user_id:
+                    await _dm(bot, p.user_id,
+                        f"👮 *{game.get_display_name(tulki)}* Serjantga aylandi! Endi sheriklarsiz.")
         else:
             await _dm(bot, tulki.user_id,
                 "🦊 Tanlagan nishoningiz mustaqil o'yinchi ekan — siz *Qotilga aylandingiz!*\n"
@@ -577,6 +608,7 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
         for r in (attacker_roles if attacker_roles is not None else pending_attackers.get(p.user_id, [])):
             attackers.append((ROLE_EMOJIS.get(r, ""), _role_name(r)))
         deaths.append({
+            "uid": p.user_id,
             "name": game.get_display_name(p),
             "role_emoji": ROLE_EMOJIS.get(p.role, ""),
             "role_name": _role_name(p.role),

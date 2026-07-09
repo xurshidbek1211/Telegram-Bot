@@ -218,6 +218,38 @@ def _target_kb(game: Game, prefix: str, actor_id: int = None,
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _mafia_target_kb(game: Game, prefix: str, actor_id: int = None,
+                     exclude_mafia: bool = False) -> InlineKeyboardMarkup:
+    """Target keyboard for mafia-side roles. Shows 🤵 badge before mafia team members."""
+    rows = []
+    for p in game.alive_players():
+        if actor_id and p.user_id == actor_id:
+            continue
+        if exclude_mafia and p.role in MAFIA_TEAM:
+            continue
+        badge = "🤵 " if p.role in MAFIA_TEAM else ""
+        rows.append([InlineKeyboardButton(
+            text=f"{badge}{game.get_display_name(p)}",
+            callback_data=f"{prefix}:{p.user_id}:{game.chat_id}"
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _komissar_target_kb(game: Game, prefix: str, actor_id: int = None) -> InlineKeyboardMarkup:
+    """Target keyboard for Komissar/Serjant. Shows 👮 badge before Komissar/Serjant members."""
+    ally_roles = {Role.KOMISSAR, Role.SERZHANT}
+    rows = []
+    for p in game.alive_players():
+        if actor_id and p.user_id == actor_id:
+            continue
+        badge = "👮 " if p.role in ally_roles else ""
+        rows.append([InlineKeyboardButton(
+            text=f"{badge}{game.get_display_name(p)}",
+            callback_data=f"{prefix}:{p.user_id}:{game.chat_id}"
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def _vote_kb(game: Game, voter_id: int) -> InlineKeyboardMarkup:
     rows = []
     for p in game.alive_players():
@@ -313,6 +345,22 @@ def _format_night_summary(deaths: list) -> str:
     return "📋 *Kecha natijalari*\n\n" + "\n\n".join(blocks)
 
 
+async def _send_last_words_dm(bot: Bot, game: Game, uid: int):
+    """DM a dead player inviting them to send a last-words text (once)."""
+    game.pending_last_words.add(uid)
+    try:
+        await bot.send_message(
+            uid,
+            "☠️ *Siz halok bo'ldingiz.*\n\n"
+            "📝 So'nggi so'zingizni yuborishingiz mumkin.\n"
+            "Yuborgan matn guruhga *So'nggi so'z* sifatida chiqariladi.\n"
+            "_Faqat 1 marta matn yubora olasiz. Rasm/video/stiker qabul qilinmaydi._",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
 async def _do_night_resolution(bot: Bot, game: Game):
     if game.phase != Phase.NIGHT:
         return
@@ -345,6 +393,14 @@ async def _do_night_resolution(bot: Bot, game: Game):
         )
 
     game.phase = Phase.DAY
+
+    # Send "last words" DM to each player who died this night
+    for d in deaths:
+        uid = d.get("uid")
+        if uid:
+            await _send_last_words_dm(bot, game, uid)
+    for p in afk_kicked:
+        await _send_last_words_dm(bot, game, p.user_id)
 
     winner = game.check_win_condition()
     night_summary = _format_night_summary(deaths)
@@ -560,6 +616,7 @@ async def _do_vote_resolution(bot: Bot, game: Game):
 
     if eliminated.role == Role.AFSUNGAR:
         game.eliminate_player(eliminated_id)
+        await _send_last_words_dm(bot, game, eliminated_id)
         await bot.send_message(
             game.chat_id,
             f"Ovoz berish natijalari:\n\n"
@@ -577,6 +634,7 @@ async def _do_vote_resolution(bot: Bot, game: Game):
         return
 
     game.eliminate_player(eliminated_id)
+    await _send_last_words_dm(bot, game, eliminated_id)
     votes_for = counts.get(eliminated_id, 0)
     votes_against = sum(c for tid, c in counts.items() if tid != eliminated_id)
     msg = (
@@ -769,16 +827,13 @@ async def _send_night_actions(bot: Bot, game: Game):
                     f"🌙 *{game.day_number}-kecha*\n\n"
                     "👨🏼‍💼 Himoya qilish uchun boshqa o'yinchi yo'q. Harakatingiz o'tkazib yuborildi.")
             else:
-                kb = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text=game.get_display_name(p), callback_data=f"nadv:{p.user_id}:{chat_id}")]
-                    for p in targets
-                ])
+                kb = _mafia_target_kb(game, "nadv", actor_id=uid)
                 await _dm(bot, uid,
                     f"🌙 *{game.day_number}-kecha*\n\n"
                     f"👨🏼‍💼 Ertangi ovozda osishdan himoya qilish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.JURNALIST:
-            kb = _target_kb(game, "njurn", actor_id=uid)
+            kb = _mafia_target_kb(game, "njurn", actor_id=uid)
             # LABARANT is in MAFIA_TEAM but is a secret member; don't reveal them
             allies = [game.get_display_name(p) for p in alive if p.role in MAFIA_TEAM and p.role != Role.LABARANT]
             ally_txt = f"\n🤝 Mafiya jamoasi: {', '.join(allies)}" if allies else ""
@@ -805,7 +860,7 @@ async def _send_night_actions(bot: Bot, game: Game):
                 f"👮🏼 Siz hozir Komissar vazifasini bajaryapsiz. Nima qilasiz ({secs}s)?", kb)
 
         elif role == Role.LABARANT:
-            kb = _target_kb(game, "nlab", actor_id=uid)
+            kb = _mafia_target_kb(game, "nlab", actor_id=uid)
             await _dm(bot, uid,
                 f"🌙 *{game.day_number}-kecha*\n\n"
                 f"🧪 O'yinchi tanlang — Mafiya bo'lsa himoya qilasiz, boshqa bo'lsa zaharlaysiz ({secs}s):", kb)
@@ -941,7 +996,7 @@ async def _send_night_actions(bot: Bot, game: Game):
                 f"50–100$ va 20% ehtimol bilan 1–2 Almas yuboriladi ({secs}s):", kb)
 
         elif role == Role.AYGOQCHI:
-            kb = _target_kb(game, "naygoychi", actor_id=uid)
+            kb = _mafia_target_kb(game, "naygoychi", actor_id=uid)
             # Ayg'oqchi is visible to Mafia team
             allies = [game.get_display_name(p) for p in alive if p.role in MAFIA_TEAM
                       and p.role != Role.LABARANT and p.user_id != uid]
@@ -2609,6 +2664,21 @@ async def _night_cb(call: CallbackQuery, action_key, target_id: int, chat_id: in
         asyncio.create_task(_do_night_resolution(call.bot, game))
 
 
+async def _notify_mafia_of_vote(bot: Bot, game: Game, voter_name: str, target_name: str, is_don: bool):
+    """Send vote notification DM to all visible Mafia members."""
+    if is_don:
+        text = f"🤵 Don → *{target_name}*ni tanladi."
+    else:
+        text = f"🤵 {voter_name} → *{target_name}*ga ovoz berdi."
+    for p in game.alive_players():
+        if p.role in (Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL,
+                      Role.ADVOKAT, Role.JURNALIST, Role.AYGOQCHI):
+            try:
+                await bot.send_message(p.user_id, text, parse_mode="Markdown")
+            except Exception:
+                pass
+
+
 @router.callback_query(F.data.startswith("nk:"))
 async def cb_nk(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
@@ -2623,13 +2693,36 @@ async def cb_nk(call: CallbackQuery):
     if not target or not target.alive:
         return await call.answer("⚠️ Bu o'yinchi mavjud emas.", show_alert=True)
 
-    game.night_actions["mafia_kill"] = tid
+    is_don = actor.role == Role.DON
+
+    # Record individual mafia vote
+    game.mafia_votes[actor.user_id] = tid
     game.night_actions[actor.user_id] = tid
     game.night_acted_uids.add(call.from_user.id)
+
+    if is_don:
+        # Don's vote is final — set kill target and mark ALL mafia members as acted
+        game.night_actions["mafia_kill"] = tid
+        game.night_actions["mafia_don_voted"] = True
+        for p in game.alive_players():
+            if p.role in (Role.DON, Role.MAFIA):
+                game.night_acted_uids.add(p.user_id)
+                game.night_actions[p.user_id] = tid
+    else:
+        # Tentatively record; will be tallied in resolve_night if Don doesn't vote
+        game.night_actions["mafia_kill"] = tid
+
     await call.answer(f"🔪 Nishon: {game.get_display_name(target)}")
     await call.message.edit_text(f"🔪 Nishon tanlandi: *{game.get_display_name(target)}*")
-    role_atm = "🤵🏻 Don bugungi qurbonini tanlamoqda..." if actor.role == Role.DON else "🤵🏼 Mafiya Donning buyrug'ini bajarishga tayyorlanmoqda..."
-    await _atmosphere(call.bot, cid, role_atm)
+
+    # DM all visible Mafia (no group atmosphere message)
+    await _notify_mafia_of_vote(
+        call.bot, game,
+        voter_name=game.get_display_name(actor),
+        target_name=game.get_display_name(target),
+        is_don=is_don,
+    )
+
     if game.all_night_actions_done():
         asyncio.create_task(_do_night_resolution(call.bot, game))
 
@@ -2664,7 +2757,7 @@ async def cb_nkommode(call: CallbackQuery):
         return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
     game.night_actions["komissar_mode"] = mode
     actor = game.get_player_by_id(call.from_user.id)
-    kb = _target_kb(game, "nkom", actor_id=actor.user_id if actor else None)
+    kb = _komissar_target_kb(game, "nkom", actor_id=actor.user_id if actor else None)
     if mode == "kill":
         text = "🔫 *O'ldirish* uchun o'yinchini tanlang:"
     else:
@@ -3315,7 +3408,37 @@ _MAFIA_CHAT_ROLES = {r for r in MAFIA_TEAM if r != Role.LABARANT}
 
 
 @router.message(F.chat.type == "private", _is_not_command)
-async def _private_team_relay(msg: Message, bot: Bot):
+async def _handle_last_words(msg: Message, bot: Bot):
+    """Intercept one last-words text from a recently-eliminated player."""
+    uid = msg.from_user.id if msg.from_user else None
+    if not uid:
+        return
+
+    # Check if player is awaiting last-words in any active game
+    for game in list(games.values()):
+        if uid not in game.pending_last_words:
+            continue
+        # Accept only plain text — reject media
+        if not msg.text:
+            await msg.answer("⚠️ Faqat matn qabul qilinadi. Rasm, video, stiker va boshqa media qabul qilinmaydi.")
+            return
+        # Remove from pending immediately (one chance only)
+        game.pending_last_words.discard(uid)
+        player = game.get_player_by_id(uid)
+        name = player.display_name if player else (msg.from_user.first_name or "Noma'lum")
+        await bot.send_message(
+            game.chat_id,
+            f"🕊 *So'nggi so'z*\n\n☠️ {name}:\n\n{msg.text}",
+            parse_mode="Markdown",
+        )
+        await msg.answer("✅ So'nggi so'zingiz guruhga yuborildi.")
+        return
+
+    # Not a last-words player — fall through to team relay
+    await _private_team_relay_inner(msg, bot)
+
+
+async def _private_team_relay_inner(msg: Message, bot: Bot):
     uid = msg.from_user.id if msg.from_user else None
     if not uid:
         return

@@ -1,15 +1,16 @@
 ---
-name: VS Mode Single Registry
-description: VS games share the same `games` dict as regular games; vs_mode=True distinguishes them
+name: VS Mode Separate Registry
+description: vs_game.py uses own vs_games dict for lobby; on start moves into handlers.games.
 ---
 
-**Rule:** Both regular Mafia games and VS Mode games are stored in `handlers.games[chat_id]`. `vs_game.py` accesses it via `_get_games()` (lazy import to avoid circular). There is no separate `vs_games` dict.
+## Rule
+- `vs_games: dict[int, Game]` is module-level in `vs_game.py` — used for lobby phase only.
+- `/vsgame` command creates Game(vs_mode=True) in `vs_games`, NOT in `handlers.games`.
+- `_launch_vs_game` moves the game into `regular_games[chat_id]` (handlers.games) so night/day logic (`run_night` etc.) can find it.
+- `end_vs_game` removes from both `regular_games` and `vs_games`.
+- `/game` (`_open_lobby`) only sees `handlers.games` — so VS lobbies don't block regular game creation.
+- All cross-module references use lazy imports inside function bodies to avoid circular imports.
 
-**Why:** Separate registries allowed simultaneous regular+VS lobbies in one chat, creating race conditions and stale state. Single registry enforces mutual exclusion at the chat level.
+**Why:** Sharing one registry caused VS lobby to be picked up by regular game logic. Separate dict isolates lobby; shared dict during play reuses existing night logic.
 
-**How to apply:**
-- `/vsgame` checks `games.get(chat_id)` and blocks if any non-ENDED game exists (regular or VS).
-- `_launch_vs_game` does NOT re-register the game; it was already stored in the lobby phase.
-- `end_vs_game` pops the entry from `games` after announcing results.
-- `cb_vs_newgame` checks the registry before creating a fresh VS lobby.
-- VS game identification: `game.vs_mode == True`.
+**How to apply:** VS lobby state → vs_games; VS active game → also in handlers.games (night loop); cleanup must remove from both.

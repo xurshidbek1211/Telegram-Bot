@@ -226,6 +226,10 @@ class Game:
     started_at: Optional[float] = None
     # Koldun hang protection (set at night, checked during voting)
     koldun_protected: set = field(default_factory=set)
+    # Mafia individual votes (uid → target_uid); resolved in night with Don priority
+    mafia_votes: dict = field(default_factory=dict)
+    # So'nggi so'z: uid of dead players awaiting their last words DM reply
+    pending_last_words: set = field(default_factory=set)
     # VS Mode fields
     vs_mode: bool = False
     vs_red_team: set = field(default_factory=set)   # initial red team user_ids
@@ -279,6 +283,7 @@ class Game:
         self.komissar_found_mafia = None
         self.night_acted_uids = set()
         self.koldun_protected = set()
+        self.mafia_votes = {}
         # Snapshot required actors for AFK tracking
         self.night_required_snapshot = self.required_night_actors()
 
@@ -296,11 +301,13 @@ class Game:
         alive = self.alive_players()
         don = self.get_alive_by_role(Role.DON)
         if don:
+            # Don is alive — only Don's vote matters (it becomes final immediately)
             required.add(don.user_id)
         else:
-            first_mafia = next((p for p in alive if p.role == Role.MAFIA), None)
-            if first_mafia:
-                required.add(first_mafia.user_id)
+            # No Don — ALL alive Mafia members must act for proper majority/tie tally
+            for p in alive:
+                if p.role == Role.MAFIA:
+                    required.add(p.user_id)
         for role in [Role.KOMISSAR, Role.DOCTOR, Role.QOTIL, Role.KEZUVCHI,
                      Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.DAYDI, Role.JURNALIST,
                      Role.AFERIST, Role.MINIOR, Role.KIMYOGAR, Role.GAZABKOR,

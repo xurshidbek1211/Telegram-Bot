@@ -3,5 +3,8 @@
 - [Labarant Hidden Mafia Member](labarant-hidden-mafia.md) — in MAFIA_TEAM for win/team logic, but excluded from all visible ally lists and shared mafia info.
 - [Joker Card Game Flow](joker-card-game.md) — death card + target chosen at night; cards sent during voting; target picks before timer ends or auto-dies; clear pending after use.
 - [Role Config Dict Migration](role-config-dict.md) — roles session changed from set to dict[str,int]; countable roles (Serzhant,Tulki,Qotil,Afsungar,Citizen) use ➕/➖; MAFIA int stored as extra count; normalize on load from DB.
-- [VS Mode Single Registry](vs-mode-registry.md) — VS games stored in shared `games` dict (not separate vs_games); vs_mode=True flag distinguishes them; /vsgame blocks if any non-ENDED game exists.
+- [VS Mode Separate Registry](vs-mode-registry.md) — vs_game.py has own `vs_games` dict for lobby phase; on game start moves into `handlers.games` for night logic; lazy imports prevent circular deps.
 - [Night summary & role-swap privacy](night-summary-format.md) — resolve_night returns (deaths, events); deaths render as structured Mehmoni/Mehmonlari block; role-swap promotions are DM-only, never group chat.
+- [Don Priority Mafia Voting](don-priority-voting.md) — Don's vote is final (marks all mafia acted early); no Don → ALL Mafia members required to act; majority wins, tie = no kill; all votes DM to mafia team only.
+- [Last Words Feature](last-words-feature.md) — eliminated players get DM asking for one text; pending_last_words set on Game; _handle_last_words handler intercepts before team relay; text posted to group as 🕊 So'nggi so'z block.
+- [Mafia Night Target Badges](mafia-night-badges.md) — _mafia_target_kb() adds 🤵 before MAFIA_TEAM members; _komissar_target_kb() adds 👮 before KOMISSAR/SERZHANT; only visible in DM keyboards, never in group.
