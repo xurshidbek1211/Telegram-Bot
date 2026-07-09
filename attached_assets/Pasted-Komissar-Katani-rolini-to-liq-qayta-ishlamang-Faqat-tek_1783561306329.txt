@@ -1,0 +1,97 @@
+Komissar Katani rolini to'liq qayta ishlamang.
+
+Faqat tekshiruv tizimidagi xatolarni tuzating.
+
+- Komissar har kecha tekshirgan o'yinchining ANIQ roli faqat Komissarning bot bilan shaxsiy chatiga yuborilsin.
+
+Natija formati:
+
+🔎 Tekshiruv natijasi
+
+👤 O'yinchi: [Ism]
+
+🎭 Roli: [Rol emojisi] [Rol nomi]
+
+- Barcha rollar o'zining haqiqiy roli bilan ko'rinsin.
+
+- Agar tekshirilgan o'yinchi 🔴 Mafia jamoasiga mansub bo'lsa, Komissarga natija yuborilgandan so'ng guruhga avtomatik quyidagi xabar yuborilsin:
+
+🚨 Komissar Mafia a'zosini fosh qildi!
+
+👤 [Ism]
+🎭 Roli: [Rol emojisi] [Rol nomi]
+
+⚖️ Darhol ovoz berish boshlandi!
+
+Shundan so'ng tun darhol yakunlansin va osish (ovoz berish) bosqichi boshlansin.
+
+Mafia a'zosi avtomatik o'lmasin.
+
+Faqat ovoz berish orqali osilishi yoki omon qolishi mumkin.
+
+━━━━━━━━━━━━━━━━━━━━━━
+👨🏼‍💼 Advokat
+━━━━━━━━━━━━━━━━━━━━━━
+
+Advokatning eski tizimi butunlay olib tashlansin.
+
+❌ Endi Advokat Komissarni aldamaydi.
+❌ Tanlagan o'yinchi hech qachon "👨🏼 Tinch Aholi" bo'lib ko'rinmaydi.
+
+Yangi tizim:
+
+Har kecha Advokat 1 nafar o'yinchini tanlaydi.
+
+Tanlangan o'yinchi faqat ertasi kuni kunduzgi ovoz berishda (osishda) himoyalanadi.
+
+• Agar eng ko'p ovoz olsa ham osilmaydi.
+• Himoya faqat 1 kun amal qiladi.
+• Kechasi o'ldirilishdan himoya qilmaydi.
+• Komissar tekshirsa, tanlangan o'yinchining haqiqiy roli ko'rinadi.
+• Himoyalanganligi hech kimga oshkor qilinmaydi.
+
+Agar himoyalangan o'yinchi eng ko'p ovoz olsa, guruhga:
+
+🛡️ Advokat himoyasi sababli [Ism] osilmadi.
+
+xabari yuborilsin.
+
+━━━━━━━━━━━━━━━━━━━━━━
+🛒 Shop
+━━━━━━━━━━━━━━━━━━━━━━
+
+O'yin tugagandan so'ng, o'yinda qatnashgan barcha o'yinchilarga bot orqali shaxsiy xabar yuborilsin.
+
+Xabar ostida mavjud 🛒 Shop tugmasi bo'lsin.
+
+Tugma bosilganda foydalanuvchi Shop menyusini ochsin.
+
+Bu oddiy `/game` va `/vsgame` rejimlarining ikkalasida ham ishlasin.
+
+━━━━━━━━━━━━━━━━━━━━━━
+💰 Shop balansi
+━━━━━━━━━━━━━━━━━━━━━━
+
+Shop tizimida Money ko'rsatishda xato bor.
+
+Muammo:
+
+Profilimda cheksiz (yoki katta miqdorda) Money mavjud, lekin `/shop` ochilganda balans `0$` ko'rsatilmoqda.
+
+Tuzatilsin:
+
+- `/shop` oynasidagi Money va Almas qiymatlari profil tizimidan o'qilsin.
+- `/profile` va `/shop` bir xil PostgreSQL jadvali va bir xil balans maydonidan foydalansin.
+- Money va Almas ikki xil joyda saqlanmasin.
+- Agar foydalanuvchining balansi mavjud bo'lsa, `/shop` aynan shu balansni ko'rsatsin.
+- Cheksiz Money yoki juda katta balans ham to'g'ri ko'rsatilsin.
+- Barcha xaridlar ham shu yagona balansdan yechilsin.
+- Koddagi eski yoki alohida Money storage mavjud bo'lsa, olib tashlanib yagona balans tizimiga o'tkazilsin.
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+Ushbu o'zgarishlarning barchasi oddiy `/game` va `/vsgame` rejimlarida to'g'ri ishlasin.
+
+Aiogram 3 va Neon PostgreSQL bilan mos ishlasin.
+
+Mavjud boshqa funksiyalar va o'yin logikasi buzilmasin.

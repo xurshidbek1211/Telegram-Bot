@@ -251,20 +251,16 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
                 _tag(k_t, active_k.role)
                 komissar_result = f"🔫 *{game.get_display_name(target_p)}* otib tashlandi!"
             else:
+                # Komissar always sees the real role — no covers, no shields
                 is_mafia = target_p.role in MAFIA_TEAM
-                shielded = k_t == game.advokat_protected
-                doc_shield = is_mafia and protection_enabled and await _use_item(k_t, "documents")
-                if doc_shield:
-                    await _dm(bot, k_t, "📁 *Hujjat himoyangiz* ishga tushdi! Komissar sizi tekshirdi, lekin siz fuqaro ko'rindingiz.")
-                apparent = is_mafia and not shielded and not doc_shield
                 role_em = ROLE_EMOJIS.get(target_p.role, "")
                 role_nm = _role_name(target_p.role)
-                if apparent:
-                    komissar_result = (
-                        f"🔎 *Tekshiruv natijasi*\n\n"
-                        f"👤 O'yinchi: {game.get_display_name(target_p)}\n"
-                        f"Roli: {role_em} {role_nm}"
-                    )
+                komissar_result = (
+                    f"🔎 *Tekshiruv natijasi*\n\n"
+                    f"👤 O'yinchi: {game.get_display_name(target_p)}\n\n"
+                    f"🎭 Roli: {role_em} {role_nm}"
+                )
+                if is_mafia:
                     komissar_found_mafia_info = {
                         "name": game.get_display_name(target_p),
                         "username": target_p.username,
@@ -272,12 +268,6 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
                         "role_name": role_nm,
                         "user_id": target_p.user_id,
                     }
-                else:
-                    komissar_result = (
-                        f"🔎 *Tekshiruv natijasi*\n\n"
-                        f"👤 O'yinchi: {game.get_display_name(target_p)}\n"
-                        f"Roli: 👨🏼 Tinch Aholi"
-                    )
                 game.komissar_investigations.setdefault(active_k.user_id, []).append(
                     (game.get_display_name(target_p), role_nm)
                 )

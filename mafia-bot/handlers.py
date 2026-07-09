@@ -519,6 +519,19 @@ async def _do_vote_resolution(bot: Bot, game: Game):
             await run_night(bot, game.chat_id)
             return
 
+    # Check Advokat vote protection (set during the previous night)
+    if game.advokat_protected and eliminated_id == game.advokat_protected:
+        game.advokat_protected = None
+        await bot.send_message(
+            game.chat_id,
+            f"Ovoz berish natijalari:\n\n"
+            f"🛡️ *Advokat himoyasi* sababli *{game.get_display_name(eliminated)}* osilmadi.\n\n"
+            "🌙 Kecha tushdi...",
+        )
+        game.day_number += 1
+        await run_night(bot, game.chat_id)
+        return
+
     # Check Koldun hang protection (game-state protection from Koldun's night action)
     if eliminated_id in game.koldun_protected:
         game.koldun_protected.discard(eliminated_id)
@@ -662,6 +675,20 @@ async def _end_game(bot: Bot, game: Game, winner: str):
         await _dm(bot, p.user_id,
             "😔 Siz yutqazdingiz.\n\n" + await _profile_text(p.user_id, p.first_name))
 
+    # Send Shop button DM to every participant after game ends
+    _shop_after_game_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛒 Shop", callback_data="open_shop")]
+    ])
+    for p in game.players.values():
+        try:
+            await bot.send_message(
+                p.user_id,
+                "🛒 O'yin tugadi! Do'konga tashrif buyurib yangi itemlar sotib oling:",
+                reply_markup=_shop_after_game_kb,
+            )
+        except Exception:
+            pass
+
     stats = await load_stats()
     stats.total_games += 1
     stats.total_players += len(game.players)
@@ -733,15 +760,14 @@ async def _send_night_actions(bot: Bot, game: Game):
                 f"🥷 Nishon tanlang — ⚠️ Komissarni tanlasangiz, u sizni o'ldiradi! ({secs}s):", kb)
 
         elif role == Role.ADVOKAT:
-            # Advokat protects known Mafia members — Labarant is secret, exclude them
-            targets = [p for p in alive if p.role in MAFIA_TEAM
-                       and p.role != Role.LABARANT and p.user_id != uid]
+            # Advokat now protects any player from being lynched the next day
+            targets = [p for p in alive if p.user_id != uid]
             if not targets:
                 game.night_actions[Role.ADVOKAT] = uid
-                game.night_acted_uids.add(uid)  # auto-skip counts as acted (no AFK penalty)
+                game.night_acted_uids.add(uid)
                 await _dm(bot, uid,
                     f"🌙 *{game.day_number}-kecha*\n\n"
-                    "👨🏼‍💼 Himoya qilish uchun boshqa Mafiya yo'q. Harakatingiz o'tkazib yuborildi.")
+                    "👨🏼‍💼 Himoya qilish uchun boshqa o'yinchi yo'q. Harakatingiz o'tkazib yuborildi.")
             else:
                 kb = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text=game.get_display_name(p), callback_data=f"nadv:{p.user_id}:{chat_id}")]
@@ -749,7 +775,7 @@ async def _send_night_actions(bot: Bot, game: Game):
                 ])
                 await _dm(bot, uid,
                     f"🌙 *{game.day_number}-kecha*\n\n"
-                    f"👨🏼‍💼 Komissardan himoya qilish uchun Mafiya a'zosini tanlang ({secs}s):", kb)
+                    f"👨🏼‍💼 Ertangi ovozda osishdan himoya qilish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.JURNALIST:
             kb = _target_kb(game, "njurn", actor_id=uid)
@@ -1969,15 +1995,25 @@ async def cmd_profile(msg: Message):
 async def cb_open_shop(call: CallbackQuery):
     uid = call.from_user.id
     p = await get_profile(uid, call.from_user.first_name)
+    dollar_str = "♾️" if p.infinite_dollar else f"{p.dollar}$"
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     await call.answer()
-    await call.message.edit_text(
-        f"🛒 *DO'KON*\n\n"
-        f"💵 Balansingiz: *{p.dollar}$*\n"
-        f"💎 Olmoslaringiz: *{diamond_str}*\n\n"
-        "Sotib olmoqchi bo'lgan narsani tanlang:",
-        reply_markup=_shop_kb(),
-    )
+    try:
+        await call.message.edit_text(
+            f"🛒 *DO'KON*\n\n"
+            f"💵 Balansingiz: *{dollar_str}*\n"
+            f"💎 Olmoslaringiz: *{diamond_str}*\n\n"
+            "Sotib olmoqchi bo'lgan narsani tanlang:",
+            reply_markup=_shop_kb(),
+        )
+    except Exception:
+        await call.message.answer(
+            f"🛒 *DO'KON*\n\n"
+            f"💵 Balansingiz: *{dollar_str}*\n"
+            f"💎 Olmoslaringiz: *{diamond_str}*\n\n"
+            "Sotib olmoqchi bo'lgan narsani tanlang:",
+            reply_markup=_shop_kb(),
+        )
 
 
 @router.message(Command("tekshiruv"))
@@ -2317,10 +2353,11 @@ def _shop_kb() -> InlineKeyboardMarkup:
 async def cmd_shop(msg: Message):
     user = msg.from_user
     p = await get_profile(user.id, user.first_name)
+    dollar_str = "♾️" if p.infinite_dollar else f"{p.dollar}$"
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     await msg.answer(
         f"🛒 *DO'KON*\n\n"
-        f"💵 Balansingiz: *{p.dollar}$*\n"
+        f"💵 Balansingiz: *{dollar_str}*\n"
         f"💎 Olmoslaringiz: *{diamond_str}*\n\n"
         "Sotib olmoqchi bo'lgan narsani tanlang:",
         reply_markup=_shop_kb(),
@@ -2352,11 +2389,12 @@ async def cmd_buy(msg: Message):
     p = await get_profile(uid, msg.from_user.first_name)
 
     if currency == "dollar":
-        if p.dollar < price:
+        if not p.infinite_dollar and p.dollar < price:
             return await msg.answer(
                 f"❌ Yetarli dollar yo'q!\n{em} *{name}* — {price}💵\nSizda: *{p.dollar}$*"
             )
-        p.dollar -= price
+        if not p.infinite_dollar:
+            p.dollar -= price
     else:
         if not p.infinite_diamond and p.diamond < price:
             return await msg.answer(
@@ -2368,10 +2406,11 @@ async def cmd_buy(msg: Message):
     setattr(p, field, getattr(p, field) + 1)
     await save_profile(p)
 
+    dollar_str = "♾️" if p.infinite_dollar else f"{p.dollar}$"
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     await msg.answer(
         f"✅ {em} *{name}* sotib olindi!\n\n"
-        f"💵 Qolgan dollar: *{p.dollar}$*\n"
+        f"💵 Qolgan dollar: *{dollar_str}*\n"
         f"💎 Qolgan olmos: *{diamond_str}*\n\n"
         f"Barcha xaridlar: /shop"
     )
@@ -2396,12 +2435,13 @@ async def cb_shop_buy(call: CallbackQuery):
     p = await get_profile(uid, call.from_user.first_name)
 
     if currency == "dollar":
-        if p.dollar < price:
+        if not p.infinite_dollar and p.dollar < price:
             return await call.answer(
                 f"❌ Yetarli dollar yo'q!\nKerak: {price}$  |  Sizda: {p.dollar}$",
                 show_alert=True,
             )
-        p.dollar -= price
+        if not p.infinite_dollar:
+            p.dollar -= price
     else:
         if not p.infinite_diamond and p.diamond < price:
             return await call.answer(
@@ -2414,13 +2454,14 @@ async def cb_shop_buy(call: CallbackQuery):
     setattr(p, field, getattr(p, field) + 1)
     await save_profile(p)
 
+    dollar_str = "♾️" if p.infinite_dollar else f"{p.dollar}$"
     diamond_str = "♾️" if p.infinite_diamond else str(p.diamond)
     await call.answer(f"✅ {em} {name} sotib olindi!", show_alert=False)
 
     try:
         await call.message.edit_text(
             f"🛒 *DO'KON*\n\n"
-            f"💵 Balansingiz: *{p.dollar}$*\n"
+            f"💵 Balansingiz: *{dollar_str}*\n"
             f"💎 Olmoslaringiz: *{diamond_str}*\n\n"
             f"✅ *{em} {name}* muvaffaqiyatli sotib olindi!\n\n"
             "Yana xarid qilish uchun tanlang:",

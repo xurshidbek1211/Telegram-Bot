@@ -334,6 +334,20 @@ async def end_vs_game(bot: Bot, game: Game, winner: str):
         await record_game_result(chat_id, p.user_id, p.first_name, won=False, points=1)
         await _dm(bot, p.user_id, "😔 VS Mode: Mag'lubiyat.")
 
+    # Shop DM to all participants after VS game ends
+    shop_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🛒 Shop", callback_data="open_shop")]
+    ])
+    for p in game.players.values():
+        try:
+            await bot.send_message(
+                p.user_id,
+                "🛒 O'yin tugadi! Do'konga tashrif buyurib yangi itemlar sotib oling:",
+                reply_markup=shop_kb,
+            )
+        except Exception:
+            pass
+
 
 @vs_router.callback_query(F.data.startswith("vs_newgame:"))
 async def cb_vs_newgame(call: CallbackQuery, bot: Bot):
