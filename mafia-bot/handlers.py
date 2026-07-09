@@ -2715,7 +2715,11 @@ async def cb_nk(call: CallbackQuery):
     await call.answer(f"🔪 Nishon: {game.get_display_name(target)}")
     await call.message.edit_text(f"🔪 Nishon tanlandi: *{game.get_display_name(target)}*")
 
-    # DM all visible Mafia (no group atmosphere message)
+    # If Don voted — send atmosphere message to group
+    if is_don:
+        await _atmosphere(call.bot, game.chat_id, "🤵 Don qorong'ulikda nishonni belgiladi...")
+
+    # DM all visible Mafia members about the vote
     await _notify_mafia_of_vote(
         call.bot, game,
         voter_name=game.get_display_name(actor),
