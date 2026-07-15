@@ -143,7 +143,7 @@ def _safe_task(coro):
             raise
         except Exception as exc:
             logger.exception(f"Background task xatosi: {exc}")
-    return _safe_task(_wrapper())
+    return asyncio.create_task(_wrapper())
 
 
 def _day_status_block(game: Game) -> str:
