@@ -524,12 +524,29 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
     daydi = game.get_alive_by_role(Role.DAYDI)
     daydi_t = actions.get(Role.DAYDI)
     if daydi and daydi_t and not blocked(daydi.user_id):
-        visitors = [game.get_display_name(game.players[v]) for v in game.night_visitors.get(daydi_t, [])
-                    if v in game.players and v != daydi.user_id]
         tp = game.players.get(daydi_t)
         if tp:
-            msg = (f"🧙‍♂️ *{game.get_display_name(tp)}* uyiga bu kecha kelganlar: {', '.join(visitors)}"
-                   if visitors else f"🧙‍♂️ *{game.get_display_name(tp)}* uyiga bu kecha hech kim kelmadi.")
+            target_died = not tp.alive  # was killed this very night
+            if target_died:
+                visitor_parts = []
+                for v in game.night_visitors.get(daydi_t, []):
+                    if v in game.players and v != daydi.user_id:
+                        vp = game.players[v]
+                        vemoji = ROLE_EMOJIS.get(vp.role, "")
+                        vrolename = _role_name(vp.role)
+                        visitor_parts.append(
+                            f"{game.get_display_name(vp)} - {vemoji} {vrolename}"
+                        )
+                if visitor_parts:
+                    msg = (
+                        "🍾 Siz kimningdir jonsiz jasadi ustida "
+                        + ", ".join(visitor_parts)
+                        + " turganini ko'rdingiz."
+                    )
+                else:
+                    msg = "🍾 Siz shishani oldingiz va uyingizga qaytdingiz! Shubhali narsani ko'rmadingiz!"
+            else:
+                msg = "🍾 Siz shishani oldingiz va uyingizga qaytdingiz! Shubhali narsani ko'rmadingiz!"
             await _dm(bot, daydi.user_id, msg)
 
     # 23. Jurnalist report

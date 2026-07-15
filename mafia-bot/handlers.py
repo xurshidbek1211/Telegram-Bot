@@ -1048,7 +1048,7 @@ async def _send_night_actions(bot: Bot, game: Game):
             kb = _target_kb(game, "nday", actor_id=uid)
             await _dm(bot, uid,
                 f"🌙 *{game.day_number}-kecha*\n\n"
-                f"🧙‍♂️ Tashrif buyurish uchun o'yinchini tanlang ({secs}s):", kb)
+                f"🍾 Tashrif buyurish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.QOTIL:
             kb = _target_kb(game, "nqot", actor_id=uid)
