@@ -19,6 +19,7 @@ class ChatSettings:
     custom_role_configs: dict = field(default_factory=dict)
     auto_delete_dead: bool = False
     night_atmosphere: bool = True
+    labarant_show: bool = True
 
 
 def _from_dict(chat_id: int, d: dict) -> "ChatSettings":

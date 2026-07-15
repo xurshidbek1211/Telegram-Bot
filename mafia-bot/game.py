@@ -234,6 +234,8 @@ class Game:
     vs_mode: bool = False
     vs_red_team: set = field(default_factory=set)   # initial red team user_ids
     vs_blue_team: set = field(default_factory=set)  # initial blue team user_ids
+    # Creator of the game lobby (can use admin commands without being a group admin)
+    creator_id: Optional[int] = None
 
     def add_player(self, user_id: int, username: str, first_name: str, last_name: str = "") -> bool:
         if user_id in self.players or len(self.players) >= MAX_PLAYERS:
