@@ -9,3 +9,4 @@
 - [Last Words Feature](last-words-feature.md) — eliminated players get DM asking for one text; pending_last_words set on Game; _handle_last_words handler intercepts before team relay; text posted to group as 🕊 So'nggi so'z block.
 - [Mafia Night Target Badges](mafia-night-badges.md) — _mafia_target_kb() adds 🤵 before MAFIA_TEAM members; _komissar_target_kb() adds 👮 before KOMISSAR/SERZHANT; only visible in DM keyboards, never in group.
 - [Day Phase HTML Redesign](day-phase-html.md) — group messages use parse_mode=HTML with <a href="tg://user?id=…"> mentions; DMs keep Markdown; flood-control helpers _safe_send/_safe_edit_text/_safe_edit_markup/_safe_task prevent game freeze.
+- [Geroy System](geroy-system.md) — hero.py: Hero dataclass + DB CRUD + level/xp/damage/missions; heroes table in DB; game.hero_used_today set; handlers: HERO_ROLES, _pending_hero_rename/transfer, day DMs, all callbacks.

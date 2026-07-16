@@ -17,7 +17,19 @@ from game import (
 )
 from stats import load_stats, save_stats
 from night import resolve_night
-from profiles import get_profile, save_profile, transfer_diamond, transfer_dollar, record_game_start, record_win, add_dollar, add_diamond, OWNER_ID
+from profiles import (
+    get_profile, save_profile, transfer_diamond, transfer_dollar,
+    record_game_start, record_win, add_dollar, add_diamond,
+    spend_dollar, spend_diamond, OWNER_ID,
+)
+from hero import (
+    get_hero, save_hero, delete_hero,
+    hero_level_threshold, hero_level_from_xp, hero_damage, hero_next_xp,
+    Hero, MAX_HP, MAX_CHARGES,
+    HP_RESTORE_COST, CHARGE_RESTORE_COST, NAME_CHANGE_COST,
+    HERO_BUY_COST, XP_BUY_COST, XP_BUY_AMOUNT, XP_PER_ATTACK,
+    KILL_MISSIONS, LEVEL_MISSIONS, ACTIVITY_MISSIONS, check_and_award_missions,
+)
 from settings import get_settings, save_settings, ChatSettings
 from bot_config import get_promo_channel, set_promo_channel
 from mdutil import escape_md
@@ -64,6 +76,16 @@ PASSIVE_MESSAGES = {
     Role.ADMIRAL:  "🧑🏻‍✈️ Siz *Admiral*siz. Komissar+Serjant tirik ekan — o'lmaysiz. Ikkovi o'lsa Komissar bo'lasiz.",
     Role.HAMSHIRA: "👩🏼‍⚕️ Siz *Hamshira*siz. Doktor tirik ekan, dam olasiz. Doktor vafot etsa — siz *Doktorga aylanasiz!*",
 }
+
+# Kunduzi Geroydan foydalana oladigan rollar
+HERO_ROLES = {
+    Role.DON, Role.KOMISSAR, Role.QOTIL, Role.KIMYOGAR,
+    Role.QAROQCHI, Role.LABARANT, Role.ADMIRAL, Role.JOKER,
+}
+
+# Pending state for hero rename / transfer flows (private message)
+_pending_hero_rename: set[int] = set()
+_pending_hero_transfer: set[int] = set()
 
 # ──────────────────────────────────────────────
 # Helpers
@@ -144,6 +166,145 @@ def _safe_task(coro):
         except Exception as exc:
             logger.exception(f"Background task xatosi: {exc}")
     return asyncio.create_task(_wrapper())
+
+
+# ─────────────────────────────────────────────
+# Hero helper functions
+# ─────────────────────────────────────────────
+
+def _hero_text(hero: "Hero") -> str:
+    min_d = 40 + (hero.level - 1) * 15
+    max_d = 50 + (hero.level - 1) * 15
+    next_xp    = hero_next_xp(hero)
+    next_thresh = hero_level_threshold(hero.level + 1)
+    return (
+        f"🥷 *Geroy: {escape_md(hero.name)}*\n\n"
+        f"⭐ Daraja: *{hero.level}*\n"
+        f"☑️ Ball: *{hero.xp}* / {next_thresh} ({next_xp} kerak)\n"
+        f"👊 Kuch: *{min_d}–{max_d} HP*\n"
+        f"🛡 Himoya: *{hero.hp}/{MAX_HP} HP*\n"
+        f"🩸 Zaryad: *{hero.charges}/{MAX_CHARGES}*\n"
+        f"⏫ Keyingi daraja: *{next_xp} ball*"
+    )
+
+
+def _hero_panel_kb(back_cb: str = "cb_profile_back") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"🩸 Zaryadlash ({CHARGE_RESTORE_COST}💶)",
+            callback_data="hero_recharge")],
+        [InlineKeyboardButton(
+            text=f"🛡 Himoyani tiklash ({HP_RESTORE_COST}💶)",
+            callback_data="hero_restore")],
+        [InlineKeyboardButton(
+            text=f"➕ Ball sotib olish ({XP_BUY_COST}💶 = +{XP_BUY_AMOUNT})",
+            callback_data="hero_buy_xp")],
+        [InlineKeyboardButton(
+            text=f"🖋 Nomni o'zgartirish ({NAME_CHANGE_COST}💶)",
+            callback_data="hero_rename")],
+        [InlineKeyboardButton(text="🔄 Geroyni o'tkazish", callback_data="hero_transfer")],
+        [InlineKeyboardButton(text="◀️ Orqaga", callback_data=back_cb)],
+    ])
+
+
+def _no_hero_kb(back_cb: str = "cb_profile_back") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"💰 Geroy sotib olish ({HERO_BUY_COST}💶)",
+            callback_data="hero_buy")],
+        [InlineKeyboardButton(text="📖 Geroy haqida", callback_data="hero_info")],
+        [InlineKeyboardButton(text="◀️ Orqaga", callback_data=back_cb)],
+    ])
+
+
+def _profile_nav_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🎯 Mission",  callback_data="cb_profile_missions"),
+        InlineKeyboardButton(text="🦸 Geroy",   callback_data="cb_profile_hero"),
+        InlineKeyboardButton(text="🛒 Shop",    callback_data="open_shop"),
+    ]])
+
+
+def _missions_text(hero: "Hero") -> str:
+    cm = hero.completed_missions
+    lines: list[str] = ["🎯 *Missiyalar*\n"]
+
+    lines.append("☠️ *Yo'q qilish missiyalari:*")
+    for i, (threshold, rewards) in enumerate(KILL_MISSIONS):
+        done = threshold in cm.get("kills", [])
+        parts: list[str] = []
+        if "diamond" in rewards: parts.append(f"💎{rewards['diamond']}")
+        if "dollar"  in rewards: parts.append(f"💶{rewards['dollar']}")
+        rwd = " + ".join(parts)
+        prev_done = (i == 0) or (KILL_MISSIONS[i - 1][0] in cm.get("kills", []))
+        if done:
+            lines.append(f"  ✅ ☠️ {threshold} ta — {rwd}")
+        elif prev_done:
+            lines.append(f"  🔲 ☠️ {threshold} ta ({hero.kills}/{threshold}) — {rwd}")
+        else:
+            lines.append(f"  🔒 ☠️ {threshold} ta — {rwd}")
+
+    lines.append("\n⭐ *Daraja missiyalari:*")
+    for i, (threshold, rewards) in enumerate(LEVEL_MISSIONS):
+        done = threshold in cm.get("levels", [])
+        parts = []
+        if "diamond" in rewards: parts.append(f"💎{rewards['diamond']}")
+        rwd = " + ".join(parts)
+        prev_done = (i == 0) or (LEVEL_MISSIONS[i - 1][0] in cm.get("levels", []))
+        if done:
+            lines.append(f"  ✅ ⭐ {threshold}-daraja — {rwd}")
+        elif prev_done:
+            lines.append(f"  🔲 ⭐ {threshold}-daraja ({hero.level}/{threshold}) — {rwd}")
+        else:
+            lines.append(f"  🔒 ⭐ {threshold}-daraja — {rwd}")
+
+    lines.append("\n⚔️ *Faoliyat missiyalari:*")
+    for i, (threshold, rewards) in enumerate(ACTIVITY_MISSIONS):
+        done = threshold in cm.get("activity", [])
+        parts = []
+        if "dollar"  in rewards: parts.append(f"💶{rewards['dollar']}")
+        if "diamond" in rewards: parts.append(f"💎{rewards['diamond']}")
+        if "charges" in rewards: parts.append(f"🩸×{rewards['charges']}")
+        rwd = " + ".join(parts)
+        prev_done = (i == 0) or (ACTIVITY_MISSIONS[i - 1][0] in cm.get("activity", []))
+        if done:
+            lines.append(f"  ✅ ⚔️ {threshold} ta — {rwd}")
+        elif prev_done:
+            lines.append(f"  🔲 ⚔️ {threshold} ta ({hero.total_attacks}/{threshold}) — {rwd}")
+        else:
+            lines.append(f"  🔒 ⚔️ {threshold} ta — {rwd}")
+
+    lines.append("\n💡 1000 ☑️ ball = 💎 50")
+    return "\n".join(lines)
+
+
+async def _send_hero_day_dms(bot: Bot, game: "Game"):
+    """Kun boshida Geroy ega bo'lgan, mos rolga ega, tirik o'yinchilarga hujum DM'i yuboradi."""
+    for player in game.alive_players():
+        if player.role not in HERO_ROLES:
+            continue
+        hero = await get_hero(player.user_id)
+        if not hero or hero.charges <= 0:
+            continue
+        min_d = 40 + (hero.level - 1) * 15
+        max_d = 50 + (hero.level - 1) * 15
+        try:
+            await bot.send_message(
+                player.user_id,
+                f"🦸 *Geroy bilan hujum qilish vaqti!*\n\n"
+                f"🥷 Geroy: *{escape_md(hero.name)}*\n"
+                f"👊 Zarba kuchi: *{min_d}–{max_d} HP*\n"
+                f"🩸 Zaryad: *{hero.charges}/{MAX_CHARGES}*",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                    InlineKeyboardButton(
+                        text="🦸 Geroy bilan urish",
+                        callback_data=f"hero_attack_kb:{game.chat_id}",
+                    )
+                ]]),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
 
 
 def _day_status_block(game: Game) -> str:
@@ -566,6 +727,10 @@ async def _do_night_resolution(bot: Bot, game: Game):
 
     # ── Message 3: Alive players with HTML mentions ──
     await _safe_send(bot, game.chat_id, _alive_status_html(game), parse_mode="HTML")
+
+    # ── Hero system: reset daily uses + send attack DMs ──
+    game.hero_used_today = set()
+    _safe_task(_send_hero_day_dms(bot, game))
 
     if found_mafia:
         fuid = found_mafia.get("uid")
@@ -2270,10 +2435,11 @@ async def _profile_text(user_id: int, first_name: str) -> str:
 @router.message(Command("profile"))
 async def cmd_profile(msg: Message):
     user = msg.from_user
-    shop_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 Do'kon", callback_data="open_shop")]
-    ])
-    await msg.answer(await _profile_text(user.id, user.first_name), reply_markup=shop_kb)
+    await msg.answer(
+        await _profile_text(user.id, user.first_name),
+        reply_markup=_profile_nav_kb(),
+        parse_mode="Markdown",
+    )
 
 
 @router.callback_query(F.data == "open_shop")
@@ -3634,6 +3800,516 @@ async def auto_delete_handler(msg: Message, bot: Bot):
 
 
 # ──────────────────────────────────────────────
+# Hero tizimi — buyruqlar va callbacklar
+# ──────────────────────────────────────────────
+
+@router.message(Command("hero"))
+async def cmd_hero(msg: Message):
+    uid  = msg.from_user.id
+    hero = await get_hero(uid)
+    if hero:
+        await msg.answer(_hero_text(hero), reply_markup=_hero_panel_kb("noop"), parse_mode="Markdown")
+    else:
+        await msg.answer(
+            "🦸 *Sizda hali Geroy mavjud emas.*\n\n"
+            "Geroy o'yinda kunduzi dushmanlarga hujum qilish imkonini beradi.\n\n"
+            f"💰 Narxi: *{HERO_BUY_COST}💶*",
+            reply_markup=_no_hero_kb("noop"),
+            parse_mode="Markdown",
+        )
+
+
+@router.message(Command("herogive"))
+async def cmd_herogive(msg: Message, bot: Bot):
+    uid = msg.from_user.id
+
+    # OWNER: maxsus parametrlar bilan istalgan foydalanuvchiga geroy beradi
+    if uid == OWNER_ID:
+        parts = msg.text.split()
+        if len(parts) < 2:
+            return await msg.answer(
+                "❓ Foydalanish: `/herogive {user_id} [name:Ism] [level:N] [xp:N] [hp:N] [charges:N]`",
+                parse_mode="Markdown",
+            )
+        try:
+            target_id = int(parts[1])
+        except ValueError:
+            return await msg.answer("❌ User ID raqam bo'lishi kerak.")
+        kwargs: dict = {}
+        for part in parts[2:]:
+            if ":" in part:
+                k, v = part.split(":", 1)
+                kwargs[k.lower()] = v
+        hero = Hero(
+            user_id=target_id,
+            name=kwargs.get("name", "Geroy"),
+            level=int(kwargs.get("level", 1)),
+            xp=int(kwargs.get("xp", 0)),
+            hp=int(kwargs.get("hp", MAX_HP)),
+            charges=int(kwargs.get("charges", MAX_CHARGES)),
+        )
+        await save_hero(hero)
+        return await msg.answer(
+            f"✅ *{target_id}*ga Geroy berildi:\n"
+            f"🥷 Nom: *{escape_md(hero.name)}*  ⭐ Daraja: *{hero.level}*\n"
+            f"🛡 HP: *{hero.hp}*  🩸 Zaryad: *{hero.charges}*",
+            parse_mode="Markdown",
+        )
+
+    # Oddiy foydalanuvchi: reply orqali boshqasiga o'z geroyini o'tkazadi
+    hero = await get_hero(uid)
+    if not hero:
+        return await msg.answer("❌ Sizda Geroy yo'q — o'tkazishga narsa yo'q.")
+    if not msg.reply_to_message or not msg.reply_to_message.from_user:
+        return await msg.answer(
+            "📌 Geroyni o'tkazish uchun boshqa o'yinchining xabariga *reply* qiling.",
+            parse_mode="Markdown",
+        )
+    target = msg.reply_to_message.from_user
+    if target.id == uid:
+        return await msg.answer("❌ O'z-o'zingizga o'tkaza olmaysiz.")
+    if target.is_bot:
+        return await msg.answer("❌ Botga o'tkaza olmaysiz.")
+    await delete_hero(uid)
+    hero.user_id = target.id
+    await save_hero(hero)
+    await msg.answer(
+        f"✅ Geroy *{escape_md(target.first_name)}*ga muvaffaqiyatli o'tkazildi!\n"
+        f"🥷 Nom: *{escape_md(hero.name)}*  ⭐ Daraja: *{hero.level}*",
+        parse_mode="Markdown",
+    )
+    try:
+        await bot.send_message(
+            target.id,
+            f"🎁 *{escape_md(msg.from_user.first_name)}* sizga Geroy o'tkazdi!\n"
+            f"🥷 Nom: *{escape_md(hero.name)}*  ⭐ Daraja: *{hero.level}*",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+# ── Profile navigation callbacks ──────────────────────────────
+
+@router.callback_query(F.data == "cb_profile_hero")
+async def cb_profile_hero(call: CallbackQuery):
+    await call.answer()
+    uid  = call.from_user.id
+    hero = await get_hero(uid)
+    if hero:
+        text = _hero_text(hero)
+        kb   = _hero_panel_kb("cb_profile_back")
+    else:
+        text = (
+            "🦸 *Sizda hali Geroy mavjud emas.*\n\n"
+            "Geroy o'yinda kunduzi dushmanlarga hujum qilish imkonini beradi.\n\n"
+            f"💰 Narxi: *{HERO_BUY_COST}💶*"
+        )
+        kb = _no_hero_kb("cb_profile_back")
+    try:
+        await call.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "cb_profile_missions")
+async def cb_profile_missions(call: CallbackQuery):
+    await call.answer()
+    uid  = call.from_user.id
+    hero = await get_hero(uid)
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="◀️ Orqaga", callback_data="cb_profile_back")
+    ]])
+    if not hero:
+        try:
+            await call.message.edit_text(
+                "🦸 Sizda Geroy yo'q — missiyalar mavjud emas.",
+                reply_markup=back_kb,
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+        return
+    try:
+        await call.message.edit_text(
+            _missions_text(hero),
+            reply_markup=back_kb,
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "cb_profile_back")
+async def cb_profile_back(call: CallbackQuery):
+    await call.answer()
+    try:
+        await call.message.edit_text(
+            await _profile_text(call.from_user.id, call.from_user.first_name),
+            reply_markup=_profile_nav_kb(),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+# ── Hero panel action callbacks ───────────────────────────────
+
+@router.callback_query(F.data == "hero_info")
+async def cb_hero_info(call: CallbackQuery):
+    await call.answer()
+    try:
+        await call.message.edit_text(
+            "🦸 *Geroy nima?*\n\n"
+            "Geroy — o'yin davomida kunduzi tirik o'yinchilarga hujum qilish imkonini beruvchi maxsus qahramon.\n\n"
+            f"👊 Zarba kuchi: *40–50 HP* (1-darajada)\n"
+            f"🛡 Maksimal himoya: *{MAX_HP} HP*\n"
+            f"🩸 Maksimal zaryad: *{MAX_CHARGES} ta*\n\n"
+            f"💰 Sotib olish narxi: *{HERO_BUY_COST}💶*\n\n"
+            "Geroy profilda doimiy saqlanadi. Har bir o'yin kunida bir marta hujum qilish mumkin.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=f"💰 Sotib olish ({HERO_BUY_COST}💶)",
+                    callback_data="hero_buy")],
+                [InlineKeyboardButton(text="◀️ Orqaga", callback_data="cb_profile_back")],
+            ]),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "hero_buy")
+async def cb_hero_buy(call: CallbackQuery):
+    uid = call.from_user.id
+    existing = await get_hero(uid)
+    if existing:
+        return await call.answer("✅ Sizda allaqachon Geroy bor!", show_alert=True)
+    ok = await spend_dollar(uid, HERO_BUY_COST)
+    if not ok:
+        p = await get_profile(uid)
+        return await call.answer(
+            f"❌ Yetarli dollar yo'q!\nKerak: {HERO_BUY_COST}💶  |  Sizda: {p.dollar}💶",
+            show_alert=True,
+        )
+    hero = Hero(user_id=uid)
+    await save_hero(hero)
+    await call.answer("🎉 Geroy sotib olindi!", show_alert=False)
+    try:
+        await call.message.edit_text(
+            _hero_text(hero),
+            reply_markup=_hero_panel_kb("cb_profile_back"),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "hero_recharge")
+async def cb_hero_recharge(call: CallbackQuery):
+    uid  = call.from_user.id
+    hero = await get_hero(uid)
+    if not hero:
+        return await call.answer("❌ Sizda Geroy yo'q.", show_alert=True)
+    if hero.charges >= MAX_CHARGES:
+        return await call.answer(
+            f"🩸 Zaryad allaqachon to'la ({MAX_CHARGES}/{MAX_CHARGES}).", show_alert=True
+        )
+    ok = await spend_dollar(uid, CHARGE_RESTORE_COST)
+    if not ok:
+        p = await get_profile(uid)
+        return await call.answer(
+            f"❌ Yetarli dollar yo'q!\nKerak: {CHARGE_RESTORE_COST}💶  |  Sizda: {p.dollar}💶",
+            show_alert=True,
+        )
+    hero.charges = MAX_CHARGES
+    await save_hero(hero)
+    await call.answer(f"✅ Zaryad to'ldirildi! 🩸 {MAX_CHARGES}/{MAX_CHARGES}", show_alert=False)
+    try:
+        await call.message.edit_text(
+            _hero_text(hero), reply_markup=_hero_panel_kb("cb_profile_back"), parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "hero_restore")
+async def cb_hero_restore(call: CallbackQuery):
+    uid  = call.from_user.id
+    hero = await get_hero(uid)
+    if not hero:
+        return await call.answer("❌ Sizda Geroy yo'q.", show_alert=True)
+    if hero.hp >= MAX_HP:
+        return await call.answer(
+            f"🛡 Himoya allaqachon to'la ({MAX_HP}/{MAX_HP}).", show_alert=True
+        )
+    ok = await spend_dollar(uid, HP_RESTORE_COST)
+    if not ok:
+        p = await get_profile(uid)
+        return await call.answer(
+            f"❌ Yetarli dollar yo'q!\nKerak: {HP_RESTORE_COST}💶  |  Sizda: {p.dollar}💶",
+            show_alert=True,
+        )
+    hero.hp = MAX_HP
+    await save_hero(hero)
+    await call.answer(f"✅ Himoya tiklandi! 🛡 {MAX_HP}/{MAX_HP}", show_alert=False)
+    try:
+        await call.message.edit_text(
+            _hero_text(hero), reply_markup=_hero_panel_kb("cb_profile_back"), parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "hero_buy_xp")
+async def cb_hero_buy_xp(call: CallbackQuery):
+    uid  = call.from_user.id
+    hero = await get_hero(uid)
+    if not hero:
+        return await call.answer("❌ Sizda Geroy yo'q.", show_alert=True)
+    ok = await spend_dollar(uid, XP_BUY_COST)
+    if not ok:
+        p = await get_profile(uid)
+        return await call.answer(
+            f"❌ Yetarli dollar yo'q!\nKerak: {XP_BUY_COST}💶  |  Sizda: {p.dollar}💶",
+            show_alert=True,
+        )
+    hero.xp    += XP_BUY_AMOUNT
+    hero.level  = hero_level_from_xp(hero.xp)
+    awards = await check_and_award_missions(hero)
+    await save_hero(hero)
+    msg_txt = f"✅ +{XP_BUY_AMOUNT} ball qo'shildi!"
+    if awards:
+        msg_txt += "\n\n🎉 Missiya:\n" + "\n".join(awards)
+    await call.answer(msg_txt[:200], show_alert=bool(awards))
+    try:
+        await call.message.edit_text(
+            _hero_text(hero), reply_markup=_hero_panel_kb("cb_profile_back"), parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "hero_rename")
+async def cb_hero_rename(call: CallbackQuery):
+    uid  = call.from_user.id
+    hero = await get_hero(uid)
+    if not hero:
+        return await call.answer("❌ Sizda Geroy yo'q.", show_alert=True)
+    ok = await spend_dollar(uid, NAME_CHANGE_COST)
+    if not ok:
+        p = await get_profile(uid)
+        return await call.answer(
+            f"❌ Yetarli dollar yo'q!\nKerak: {NAME_CHANGE_COST}💶  |  Sizda: {p.dollar}💶",
+            show_alert=True,
+        )
+    _pending_hero_rename.add(uid)
+    await call.answer("✅ To'lov qabul qilindi. Nomni yozing.", show_alert=False)
+    try:
+        await call.message.edit_text(
+            "🖋 *Geroyingizning yangi nomini yozing:*\n_(Maksimal 32 belgi)_",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "hero_transfer")
+async def cb_hero_transfer(call: CallbackQuery):
+    uid  = call.from_user.id
+    hero = await get_hero(uid)
+    if not hero:
+        return await call.answer("❌ Sizda Geroy yo'q.", show_alert=True)
+    _pending_hero_transfer.add(uid)
+    await call.answer()
+    try:
+        await call.message.edit_text(
+            "🔄 *Geroyni o'tkazish*\n\n"
+            "Qabul qiluvchining *user ID*sini yozing.\n"
+            "_(Bekor qilish uchun /cancel yozing)_",
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "noop")
+async def cb_noop(call: CallbackQuery):
+    await call.answer()
+
+
+# ── Hero attack (kun fazasi) ──────────────────────────────────
+
+@router.callback_query(F.data.startswith("hero_attack_kb:"))
+async def cb_hero_attack_kb(call: CallbackQuery):
+    """Nishon tanlash klaviaturasini ko'rsatadi."""
+    cid  = int(call.data.split(":")[1])
+    uid  = call.from_user.id
+    game = games.get(cid)
+
+    if not game or game.phase != Phase.DAY:
+        return await call.answer("❌ Hozir hujum qilish mumkin emas.", show_alert=True)
+    player = game.get_player_by_id(uid)
+    if not player or not player.alive:
+        return await call.answer("❌ Siz o'yinda yo'qsiz.", show_alert=True)
+    if player.role not in HERO_ROLES:
+        return await call.answer("❌ Sizning rolingiz Geroydan foydalana olmaydi.", show_alert=True)
+    if uid in game.hero_used_today:
+        return await call.answer("❌ Siz bugun allaqachon hujum qildingiz.", show_alert=True)
+
+    hero = await get_hero(uid)
+    if not hero or hero.charges <= 0:
+        return await call.answer("❌ Zaryad yo'q! Zaryadlash uchun /hero.", show_alert=True)
+
+    targets = [p for p in game.alive_players() if p.user_id != uid]
+    if not targets:
+        return await call.answer("❌ Nishon yo'q.", show_alert=True)
+
+    rows = []
+    for p in targets:
+        rows.append([InlineKeyboardButton(
+            text=game.get_display_name(p),
+            callback_data=f"hero_attack:{p.user_id}:{cid}",
+        )])
+    rows.append([InlineKeyboardButton(text="❌ Bekor qilish", callback_data="hero_attack_cancel")])
+
+    await call.answer()
+    try:
+        await call.message.edit_text(
+            f"🦸 *{escape_md(hero.name)}* — nishon tanlang:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "hero_attack_cancel")
+async def cb_hero_attack_cancel(call: CallbackQuery):
+    await call.answer("Bekor qilindi.")
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("hero_attack:"))
+async def cb_hero_attack(call: CallbackQuery, bot: Bot):
+    """Tanlangan nishonga geroy hujumini bajaradi."""
+    parts      = call.data.split(":")
+    target_uid = int(parts[1])
+    cid        = int(parts[2])
+    uid        = call.from_user.id
+    game       = games.get(cid)
+
+    if not game or game.phase != Phase.DAY:
+        return await call.answer("❌ Hujum vaqti o'tdi.", show_alert=True)
+    player = game.get_player_by_id(uid)
+    if not player or not player.alive:
+        return await call.answer("❌ Siz o'yinda yo'qsiz.", show_alert=True)
+    if player.role not in HERO_ROLES:
+        return await call.answer("❌ Sizning rolingiz bu imkoniyatdan foydalana olmaydi.", show_alert=True)
+    if uid in game.hero_used_today:
+        return await call.answer("❌ Bugun allaqachon hujum qildingiz.", show_alert=True)
+
+    hero = await get_hero(uid)
+    if not hero or hero.charges <= 0:
+        return await call.answer("❌ Zaryad tugagan! /hero orqali zaryadlang.", show_alert=True)
+
+    target = game.get_player_by_id(target_uid)
+    if not target or not target.alive:
+        return await call.answer("❌ Nishon allaqachon hayotda emas.", show_alert=True)
+
+    await call.answer()
+
+    # hero_protect itemini tekshirish
+    tp = await get_profile(target_uid)
+    if tp.hero_protect > 0:
+        tp.hero_protect -= 1
+        await save_profile(tp)
+        game.hero_used_today.add(uid)
+        hero.charges      -= 1
+        hero.total_attacks += 1
+        hero.xp           += XP_PER_ATTACK
+        hero.level         = hero_level_from_xp(hero.xp)
+        await save_hero(hero)
+        try:
+            await call.message.edit_text(
+                "🔰 Nishon Geroydan himoyalangan edi!\n"
+                "Himoya blokni tutib oldi. Zaryad sarflandi.",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+        return
+
+    # Zarar
+    damage = hero_damage(hero.level)
+    target.hp -= damage
+    game.hero_used_today.add(uid)
+    hero.charges      -= 1
+    hero.total_attacks += 1
+    hero.xp           += XP_PER_ATTACK
+    hero.level         = hero_level_from_xp(hero.xp)
+
+    t_em  = ROLE_EMOJIS.get(target.role, "")
+    t_rn  = ROLE_NAMES_UZ.get(target.role, "")
+    a_em  = ROLE_EMOJIS.get(player.role, "")
+    a_rn  = ROLE_NAMES_UZ.get(player.role, "")
+    t_disp = game.get_display_name(target)
+
+    if target.hp <= 0:
+        # Nishon yo'q qilindi
+        game.eliminate_player(target_uid)
+        hero.kills += 1
+        awards = await check_and_award_missions(hero)
+        await save_hero(hero)
+
+        group_msg = (
+            f"⚰️ {t_em} *{t_disp}*ni\n"
+            f"{a_em} *{a_rn}* o'zining "
+            f"*{escape_md(hero.name)}* geroyi bilan yer tishlatdi!"
+        )
+        await _safe_send(bot, cid, group_msg, parse_mode="Markdown")
+
+        dm_text = f"☠️ *{t_disp}* ({t_em} {t_rn}) yo'q qilindi!\n🩸 Qolgan zaryad: *{hero.charges}/{MAX_CHARGES}*"
+        if awards:
+            dm_text += "\n\n🎉 Missiya:\n" + "\n".join(awards)
+        try:
+            await call.message.edit_text(dm_text, parse_mode="Markdown")
+        except Exception:
+            pass
+
+        await _send_last_words_dm(bot, game, target_uid)
+        winner = game.check_win_condition()
+        if winner:
+            _safe_task(_end_game(bot, game, winner))
+    else:
+        awards = await check_and_award_missions(hero)
+        await save_hero(hero)
+
+        group_msg = (
+            f"🦸 *{escape_md(hero.name)}* geroyi zarba berdi!\n\n"
+            f"{a_em} {a_rn} ➜ {t_em} *{t_disp}*\n"
+            f"❤️ Yo'qotilgan HP: *{damage}*\n"
+            "Nishon tirik qoldi."
+        )
+        await _safe_send(bot, cid, group_msg, parse_mode="Markdown")
+
+        dm_text = (
+            f"✅ Hujum bajarildi!\n"
+            f"❤️ Yo'qotilgan HP: *{damage}*\n"
+            f"🩸 Qolgan zaryad: *{hero.charges}/{MAX_CHARGES}*"
+        )
+        if awards:
+            dm_text += "\n\n🎉 Missiya:\n" + "\n".join(awards)
+        try:
+            await call.message.edit_text(dm_text, parse_mode="Markdown")
+        except Exception:
+            pass
+
+
+# ──────────────────────────────────────────────
 # Private team-chat relay
 # (non-command private messages during active game)
 # ──────────────────────────────────────────────
@@ -3644,11 +4320,74 @@ _MAFIA_CHAT_ROLES = {r for r in MAFIA_TEAM if r != Role.LABARANT}
 
 @router.message(F.chat.type == "private", _is_not_command)
 async def _handle_last_words(msg: Message, bot: Bot):
-    """Intercept one last-words text from a recently-eliminated player."""
+    """Intercept private messages: rename/transfer hero → last words → team relay."""
     uid = msg.from_user.id if msg.from_user else None
     if not uid:
         return
 
+    # ── 0a. Hero rename pending ──────────────────────────────
+    if uid in _pending_hero_rename:
+        _pending_hero_rename.discard(uid)
+        if not msg.text:
+            await msg.answer("⚠️ Faqat matn qabul qilinadi.")
+            return
+        new_name = msg.text.strip()[:32]
+        if not new_name:
+            await msg.answer("⚠️ Nom bo'sh bo'lishi mumkin emas.")
+            return
+        hero = await get_hero(uid)
+        if not hero:
+            await msg.answer("❌ Sizda Geroy yo'q.")
+            return
+        hero.name = new_name
+        await save_hero(hero)
+        await msg.answer(
+            f"✅ Geroy nomi *{escape_md(new_name)}* ga o'zgartirildi!",
+            parse_mode="Markdown",
+        )
+        return
+
+    # ── 0b. Hero transfer pending ────────────────────────────
+    if uid in _pending_hero_transfer:
+        if msg.text and msg.text.strip().lower() in ("/cancel", "bekor"):
+            _pending_hero_transfer.discard(uid)
+            await msg.answer("❌ O'tkazish bekor qilindi.")
+            return
+        _pending_hero_transfer.discard(uid)
+        if not msg.text:
+            await msg.answer("⚠️ User ID yozing.")
+            return
+        try:
+            target_id = int(msg.text.strip())
+        except ValueError:
+            await msg.answer("❌ Faqat raqamli user ID kiriting (masalan: 123456789).")
+            return
+        if target_id == uid:
+            await msg.answer("❌ O'z-o'zingizga o'tkaza olmaysiz.")
+            return
+        hero = await get_hero(uid)
+        if not hero:
+            await msg.answer("❌ Sizda Geroy yo'q.")
+            return
+        await delete_hero(uid)
+        hero.user_id = target_id
+        await save_hero(hero)
+        await msg.answer(
+            f"✅ Geroy *{target_id}*ga o'tkazildi!\n🥷 Nom: *{escape_md(hero.name)}*",
+            parse_mode="Markdown",
+        )
+        try:
+            await bot.send_message(
+                target_id,
+                f"🎁 Siz Geroy oldingiz!\n"
+                f"🥷 Nom: *{escape_md(hero.name)}*  ⭐ Daraja: *{hero.level}*",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+        return
+
+    # ── 1. Last words (eliminated player) ───────────────────
     # Check if player is awaiting last-words in any active game
     for game in list(games.values()):
         if uid not in game.pending_last_words:

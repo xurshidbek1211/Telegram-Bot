@@ -236,6 +236,8 @@ class Game:
     vs_blue_team: set = field(default_factory=set)  # initial blue team user_ids
     # Creator of the game lobby (can use admin commands without being a group admin)
     creator_id: Optional[int] = None
+    # Hero system: tracks which UIDs already used hero this day
+    hero_used_today: set = field(default_factory=set)
 
     def add_player(self, user_id: int, username: str, first_name: str, last_name: str = "") -> bool:
         if user_id in self.players or len(self.players) >= MAX_PLAYERS:

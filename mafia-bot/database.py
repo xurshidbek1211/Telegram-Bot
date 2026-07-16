@@ -78,6 +78,20 @@ async def init_db():
                 value TEXT NOT NULL
             )
         """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS heroes (
+                user_id       BIGINT PRIMARY KEY,
+                name          TEXT    DEFAULT 'Geroy',
+                level         INTEGER DEFAULT 1,
+                xp            INTEGER DEFAULT 0,
+                hp            INTEGER DEFAULT 80,
+                charges       INTEGER DEFAULT 10,
+                total_attacks INTEGER DEFAULT 0,
+                kills         INTEGER DEFAULT 0,
+                completed_missions JSONB DEFAULT
+                    '{"kills":[],"levels":[],"activity":[]}'::jsonb
+            )
+        """)
     logger.info("Barcha jadvallar tayyor.")
 
 
