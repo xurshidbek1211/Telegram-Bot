@@ -20,6 +20,10 @@ class ChatSettings:
     auto_delete_dead: bool = False
     night_atmosphere: bool = True
     labarant_show: bool = True
+    komissar_auto_announce: bool = True
+    member_can_start: bool = True
+    auto_pin: bool = False
+    hero_enabled: bool = True
 
 
 def _from_dict(chat_id: int, d: dict) -> "ChatSettings":

@@ -11,6 +11,7 @@ _FIELDS = [
     "infinite_diamond", "infinite_dollar", "shield", "documents",
     "hang_protect", "killer_protect", "gun", "drug_protect", "mask",
     "slip_protect", "hero_protect", "mines", "active_roles",
+    "oltin_sandiq_date", "oltin_sandiq_count",
 ]
 
 
@@ -35,6 +36,8 @@ class Profile:
     hero_protect: int = 0
     mines: int = 0
     active_roles: list = field(default_factory=list)
+    oltin_sandiq_date: str = ""
+    oltin_sandiq_count: int = 0
 
 
 _cache: dict[int, Profile] = {}
@@ -65,6 +68,8 @@ def _row_to_profile(row) -> Profile:
         hero_protect=d.get("hero_protect", 0),
         mines=d.get("mines", 0),
         active_roles=ar or [],
+        oltin_sandiq_date=d.get("oltin_sandiq_date", ""),
+        oltin_sandiq_count=int(d.get("oltin_sandiq_count", 0)),
     )
 
 
@@ -110,9 +115,10 @@ async def save_profile(profile: Profile):
                 user_id, first_name, dollar, diamond, wins, games,
                 infinite_diamond, infinite_dollar, shield, documents,
                 hang_protect, killer_protect, gun, drug_protect, mask,
-                slip_protect, hero_protect, mines, active_roles
+                slip_protect, hero_protect, mines, active_roles,
+                oltin_sandiq_date, oltin_sandiq_count
             ) VALUES (
-                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+                $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
             )
             ON CONFLICT (user_id) DO UPDATE SET
                 first_name = EXCLUDED.first_name,
@@ -132,13 +138,16 @@ async def save_profile(profile: Profile):
                 slip_protect = EXCLUDED.slip_protect,
                 hero_protect = EXCLUDED.hero_protect,
                 mines = EXCLUDED.mines,
-                active_roles = EXCLUDED.active_roles
+                active_roles = EXCLUDED.active_roles,
+                oltin_sandiq_date = EXCLUDED.oltin_sandiq_date,
+                oltin_sandiq_count = EXCLUDED.oltin_sandiq_count
             """,
             profile.user_id, profile.first_name, profile.dollar, profile.diamond,
             profile.wins, profile.games, profile.infinite_diamond, profile.infinite_dollar,
             profile.shield, profile.documents, profile.hang_protect, profile.killer_protect,
             profile.gun, profile.drug_protect, profile.mask, profile.slip_protect,
             profile.hero_protect, profile.mines, json.dumps(profile.active_roles),
+            profile.oltin_sandiq_date, profile.oltin_sandiq_count,
         )
 
 

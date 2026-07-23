@@ -1,0 +1,358 @@
+Mafia botga quyidagi barcha yangiliklarni qo‘shing.
+
+================================
+1. RO‘YXATDAN O‘TISH
+================================
+
+- O‘yinchilar @username bilan emas, Telegram User ID mention orqali ko‘rsatilsin:
+
+tg://user?id=USER_ID
+
+- Ikkinchi marta /game bosilganda:
+
+📋 Ro‘yxatdan o‘tish davom etmoqda.
+
+👥 Ro‘yxatdan o‘tganlar: X ta
+
+USER, USER, USER
+
+ko‘rinishida chiqsin.
+
+- Mentionlar vergul bilan ajratilsin.
+
+
+================================
+2. ATMOSFERA XABARLARI
+================================
+
+- Barcha atmosfera xabarlaridan 🌙 smayligi olib tashlansin.
+
+
+================================
+3. O‘YIN TUGAGANDAN KEYIN
+================================
+
+Yakuniy natija xabari ostida tugmalar:
+
+🦸 Geroy
+🎯 Mission
+📦 Sandiq
+
+chiqsin.
+
+
+================================
+4. YANGI O‘YIN TUGMASI
+================================
+
+- 🆕 Yangi o‘yin boshlash tugmasi faqat 1 marta ishlasin.
+- Qayta bosilganda yangi lobby yaratilmasin.
+
+
+================================
+5. KEZUVCHI
+================================
+
+- Kezuvchi uxlatgan o‘yinchi keyingi tun boshlanguncha guruhga yozolmasin.
+- Yozgan barcha xabarlari avtomatik o‘chirilsin.
+- Hech qanday ogohlantirish yuborilmasin.
+
+
+================================
+6. SO‘NGGI SO‘Z
+================================
+
+Halok bo‘lgan o‘yinchiga:
+
+☠️ Siz halok bo‘ldingiz.
+
+📝 So‘nggi so‘zingizni yuboring.
+
+chiqsin.
+
+
+================================
+7. CREATOR UCHUN GEROY BERISH
+================================
+
+Yangi buyruq:
+
+/geroy <daraja> <user_id>
+
+Misol:
+
+/geroy 5 123456789
+
+- Belgilangan userga shu darajadagi Geroy berilsin.
+- Agar Geroyi mavjud bo‘lsa, darajasi yangilansin.
+
+
+================================
+8. KOMISSAR KATANI
+================================
+
+- Mafia topilganda avtomatik ovoz berish boshlanmasin.
+- Avval muhokama bo‘lsin.
+- Keyin oddiy ovoz berish boshlansin.
+
+
+================================
+9. TULKI
+================================
+
+Agar Tulki Serjant tomoniga o‘tsa:
+
+- Komissar va Serjantlarni ko‘radi.
+- Komissar va Serjantlar ham Tulkini ko‘radi.
+
+
+Agar Tulki Mafia tomoniga o‘tsa:
+
+- Don va barcha mafiyalarni ko‘radi.
+- Don va mafiyalar ham Tulkini ko‘radi.
+
+
+================================
+10. /SOZLASH
+================================
+
+Quyidagi sozlamalar qo‘shilsin:
+
+⚙️ Komissar topganda avtomatik xabar:
+- Yoqilgan
+- O‘chirilgan
+
+
+⚙️ Oddiy a'zolar o‘yin boshlashi:
+- Yoqilgan
+- O‘chirilgan
+
+
+⚙️ Avtomatik pin:
+- Yoqilgan
+- O‘chirilgan
+
+
+⚙️ 🦸 Geroydan foydalanish:
+- Yoqilgan
+- O‘chirilgan
+
+
+================================
+11. AVTOMATIK PIN
+================================
+
+Quyidagi xabarlar avtomatik pin qilinsin:
+
+- Ro‘yxatdan o‘tish
+- Tun
+- Muhokama
+- Ovoz berish
+- Yakuniy natija
+
+- Yangi bosqich xabari pin qilinishidan oldin eski pin olib tashlansin.
+
+
+================================
+12. /UTAG
+================================
+
+- Qo‘shimcha matn yuborilmasin.
+- Faqat guruh a'zolari User ID mention qilinsin.
+- Mentionlar bitta qatorda vergul bilan ajratilsin.
+- Bot va guruhdan chiqib ketgan foydalanuvchilar chiqarilmasin.
+- Telegram limitidan oshsa bir nechta xabarga bo‘lib yuborilsin.
+
+
+================================
+13. 📦 SANDIQ TIZIMI
+================================
+
+O‘yin tugagandan keyin:
+
+📦 Sandiq
+
+tugmasi ishlasin.
+
+
+Sandiq menyusi:
+
+1) 📦 Oddiy sandiq — 500$
+
+6 ta yopiq sandiq chiqadi.
+O‘yinchi 1 tasini tanlaydi.
+
+
+Tarkibi:
+
+❌ 2 ta bo‘sh sandiq
+
+🛡 1 ta himoya sandig‘i
+
+💵 3 ta pul sandig‘i
+(400$–800$ tasodifiy)
+
+
+Himoya sandig‘i ochilganda:
+
+Quyidagilardan tasodifiy 1 ta beriladi:
+
+🛡 Himoya
+⚖️ Osishdan himoya
+⛑️ Qotildan himoya
+💊 Doridan himoya
+🎭 Maska
+🟨 Sirpanishdan himoya
+🟩 Geroydan himoya
+
+
+
+2) 🎁 Noyob sandiq — 2000$
+
+6 ta yopiq sandiq chiqadi.
+O‘yinchi 1 tasini tanlaydi.
+
+
+Tarkibi:
+
+❌ 1 ta bo‘sh sandiq
+
+🛡 1 ta himoya sandig‘i
+
+💎 2 ta olmos sandig‘i
+(1–3💎)
+
+💵 2 ta pul sandig‘i
+(500$–2500$)
+
+
+Himoya sandig‘i:
+
+Tasodifiy 2 ta:
+
+🛡 Himoya
+⚖️ Osishdan himoya
+⛑️ Qotildan himoya
+💊 Doridan himoya
+🎭 Maska
+🟨 Sirpanishdan himoya
+🟩 Geroydan himoya
+
+
+
+3) 🏆 Oltin sandiq — 10💎
+
+Kuniga maksimal 2 ta ochiladi.
+
+Limit:
+- Har bir user uchun alohida.
+- Har kuni 00:00 da yangilanadi.
+
+
+6 ta yopiq sandiq chiqadi.
+
+O‘yinchi 2 ta sandiq tanlaydi.
+
+
+Tarkibi:
+
+❌ 1 ta bo‘sh sandiq
+
+🛡 1 ta himoya sandig‘i
+
+💎 2 ta olmos sandig‘i
+(3–8💎)
+
+💵 2 ta pul sandig‘i
+(3000$–7000$)
+
+
+Himoya sandig‘i:
+
+Tasodifiy 3 ta:
+
+🛡 Himoya
+⚖️ Osishdan himoya
+⛑️ Qotildan himoya
+💊 Doridan himoya
+🎭 Maska
+🟨 Sirpanishdan himoya
+🟩 Geroydan himoya
+
+
+Limit tugaganda:
+
+⚠️ Siz bugungi 2 ta Oltin sandiq limitidan foydalandingiz. Ertaga yana ochishingiz mumkin.
+
+
+Qo‘shimcha:
+
+- Mukofotlar har safar tasodifiy joylashtirilsin.
+- Tanlangan sandiq mukofoti darhol balansga qo‘shilsin.
+- Keyin qolgan sandiqlar ochilib, ichidagi mukofotlar ko‘rsatilsin.
+
+
+================================
+14. 🦸 GEROY TIZIMI
+================================
+
+Geroy sotib olish:
+
+- 3000$ emas.
+- Narxi: 90💎
+
+
+Daraja oshirish:
+
+Olmos evaziga.
+
+
+Narxlar:
+
+1 → 2 = 30💎
+2 → 3 = 40💎
+3 → 4 = 50💎
+4 → 5 = 60💎
+5 → 6 = 70💎
+6 → 7 = 80💎
+7 → 8 = 90💎
+8 → 9 = 100💎
+9 → 10 = 110💎
+
+
+Formula:
+
+N → N+1 = (N+2) × 10💎
+
+
+Misol:
+
+10 → 11 = 120💎
+11 → 12 = 130💎
+
+
+================================
+15. GEROYDAN FOYDALANISH SOZLAMASI
+================================
+
+Har bir guruh uchun alohida saqlansin.
+
+Yoqilgan:
+
+- Geroy menyusi ishlaydi.
+- Hujumlar ishlaydi.
+- Missiyalar ishlaydi.
+- Barcha Geroy funksiyalari ishlaydi.
+
+
+O‘chirilgan:
+
+- Geroy tugmalari ishlamasin.
+- Geroy hujumlari ishlamasin.
+- Missiyalar ishlamasin.
+- O‘yinchilar Geroydan foydalana olmasin.
+
+
+Barcha o‘zgarishlarni mavjud kod strukturasiga mos qo‘shing.
+Database saqlanishi kerak.
+Bot qayta ishga tushganda sozlamalar va ma'lumotlar yo‘qolmasin.

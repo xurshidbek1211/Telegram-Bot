@@ -25,12 +25,19 @@ from profiles import (
 from hero import (
     get_hero, save_hero, delete_hero,
     hero_level_threshold, hero_level_from_xp, hero_damage, hero_next_xp,
+    hero_upgrade_cost,
     Hero, MAX_HP, MAX_CHARGES,
     HP_RESTORE_COST, CHARGE_RESTORE_COST, NAME_CHANGE_COST,
     HERO_BUY_COST, XP_BUY_COST, XP_BUY_AMOUNT, XP_PER_ATTACK,
     KILL_MISSIONS, LEVEL_MISSIONS, ACTIVITY_MISSIONS, check_and_award_missions,
 )
 from settings import get_settings, save_settings, ChatSettings
+from chest import (
+    ODDIY_COST, NOYOB_COST, OLTIN_COST, OLTIN_LIMIT,
+    box_emoji, apply_box_reward,
+    can_open_oltin, record_oltin_open,
+    start_session, get_session, clear_session,
+)
 from bot_config import get_promo_channel, set_promo_channel
 from mdutil import escape_md
 from ratings import record_game_result, get_top_ratings
@@ -188,8 +195,12 @@ def _hero_text(hero: "Hero") -> str:
     )
 
 
-def _hero_panel_kb(back_cb: str = "cb_profile_back") -> InlineKeyboardMarkup:
+def _hero_panel_kb(back_cb: str = "cb_profile_back", hero_level: int = 1) -> InlineKeyboardMarkup:
+    upgrade_cost = hero_upgrade_cost(hero_level)
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(
+            text=f"⬆️ Daraja oshirish ({upgrade_cost}💎)",
+            callback_data="hero_upgrade")],
         [InlineKeyboardButton(
             text=f"🩸 Zaryadlash ({CHARGE_RESTORE_COST}💶)",
             callback_data="hero_recharge")],
@@ -210,7 +221,7 @@ def _hero_panel_kb(back_cb: str = "cb_profile_back") -> InlineKeyboardMarkup:
 def _no_hero_kb(back_cb: str = "cb_profile_back") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
-            text=f"💰 Geroy sotib olish ({HERO_BUY_COST}💶)",
+            text=f"💰 Geroy sotib olish ({HERO_BUY_COST}💎)",
             callback_data="hero_buy")],
         [InlineKeyboardButton(text="📖 Geroy haqida", callback_data="hero_info")],
         [InlineKeyboardButton(text="◀️ Orqaga", callback_data=back_cb)],
@@ -280,6 +291,9 @@ def _missions_text(hero: "Hero") -> str:
 
 async def _send_hero_day_dms(bot: Bot, game: "Game"):
     """Kun boshida Geroy ega bo'lgan, mos rolga ega, tirik o'yinchilarga hujum DM'i yuboradi."""
+    settings = await get_settings(game.chat_id)
+    if not settings.hero_enabled:
+        return
     for player in game.alive_players():
         if player.role not in HERO_ROLES:
             continue
@@ -399,6 +413,21 @@ def _lobby_kb(chat_id: int, bot_username: Optional[str] = None) -> InlineKeyboar
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _lobby_text_html(game: Game) -> str:
+    """HTML formatida lobby matni (mention bilan)."""
+    lines = []
+    for i, p in enumerate(game.players.values(), 1):
+        name = f"{p.first_name} {p.last_name}".strip() if p.last_name else p.first_name
+        safe = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        lines.append(f'{i}. <a href="tg://user?id={p.user_id}">{safe}</a>')
+    player_list = "\n".join(lines) if lines else "Hali o'yinchilar yo'q."
+    return (
+        f"📋 <b>Ro'yxatdan o'tish davom etmoqda!</b>\n\n"
+        f"👥 Ro'yxatdan o'tganlar: {len(game.players)} ta\n\n"
+        f"{player_list}"
+    )
+
+
 def _lobby_text(game: Game) -> str:
     return (
         f"Ro'yxatdan o'tish davom etmoqda!\n\n"
@@ -416,9 +445,9 @@ async def _update_lobby_message(bot: Bot, game: Game):
         await bot.edit_message_text(
             chat_id=game.chat_id,
             message_id=game.lobby_msg_id,
-            text=_lobby_text(game),
+            text=_lobby_text_html(game),
             reply_markup=_lobby_kb(game.chat_id, bot_username),
-            parse_mode="Markdown",
+            parse_mode="HTML",
         )
     except Exception:
         pass
@@ -511,6 +540,24 @@ async def run_night(bot: Bot, chat_id: int):
         return
 
     settings = await get_settings(chat_id)
+
+    # Kezuvchi: unrestrict previously blocked player
+    if game.kezuvchi_restricted_uid:
+        try:
+            from aiogram.types import ChatPermissions
+            await bot.restrict_chat_member(
+                chat_id, game.kezuvchi_restricted_uid,
+                ChatPermissions(
+                    can_send_messages=True,
+                    can_send_media_messages=True,
+                    can_send_other_messages=True,
+                    can_add_web_page_previews=True,
+                )
+            )
+        except Exception:
+            pass
+        game.kezuvchi_restricted_uid = None
+
     game.reset_night_state()
     game.phase = Phase.NIGHT
     _auto_passive(game)
@@ -520,12 +567,14 @@ async def run_night(bot: Bot, chat_id: int):
         f"{i}. {game.get_display_name(p)}"
         for i, p in enumerate(game.alive_players(), 1)
     )
-    await bot.send_message(
+    night_msg = await bot.send_message(
         chat_id,
         f"🌙 Tun\n\nTirik o'yinchilar:\n\n{alive_list_night}\n\n"
         f"⏳ Tonggacha: {settings.night_secs} sekund",
         reply_markup=_dm_entry_kb(bot_username, "🤖 Botga kirish", chat_id, "group"),
     )
+    if night_msg:
+        await _auto_pin(bot, game, night_msg.message_id)
 
     await _send_night_actions(bot, game)
 
@@ -550,7 +599,24 @@ async def _atmosphere(bot: Bot, chat_id: int, text: str):
         settings = await get_settings(chat_id)
         if not settings.night_atmosphere:
             return
-        await bot.send_message(chat_id, f"🌙 _{text}_", parse_mode="Markdown")
+        await bot.send_message(chat_id, f"_{text}_", parse_mode="Markdown")
+    except Exception:
+        pass
+
+
+async def _auto_pin(bot: Bot, game: Game, message_id: int):
+    """Yangi xabarni pin qiladi (eski pinni avval olib tashlaydi)."""
+    settings = await get_settings(game.chat_id)
+    if not settings.auto_pin:
+        return
+    if game.pinned_msg_id:
+        try:
+            await bot.unpin_chat_message(game.chat_id, game.pinned_msg_id)
+        except Exception:
+            pass
+    try:
+        await bot.pin_chat_message(game.chat_id, message_id, disable_notification=True)
+        game.pinned_msg_id = message_id
     except Exception:
         pass
 
@@ -644,9 +710,7 @@ async def _send_last_words_dm(bot: Bot, game: Game, uid: int):
         await bot.send_message(
             uid,
             "☠️ *Siz halok bo'ldingiz.*\n\n"
-            "📝 So'nggi so'zingizni yuborishingiz mumkin.\n"
-            "Yuborgan matn guruhga *So'nggi so'z* sifatida chiqariladi.\n"
-            "_Faqat 1 marta matn yubora olasiz. Rasm/video/stiker qabul qilinmaydi._",
+            "📝 So'nggi so'zingizni yuboring.",
             parse_mode="Markdown",
         )
     except Exception:
@@ -732,7 +796,20 @@ async def _do_night_resolution(bot: Bot, game: Game):
     game.hero_used_today = set()
     _safe_task(_send_hero_day_dms(bot, game))
 
-    if found_mafia:
+    # Kezuvchi: restrict blocked player from writing until next night
+    kez_target = game.night_actions.get(Role.KEZUVCHI)
+    if kez_target:
+        try:
+            from aiogram.types import ChatPermissions
+            await bot.restrict_chat_member(
+                game.chat_id, kez_target,
+                ChatPermissions(can_send_messages=False)
+            )
+            game.kezuvchi_restricted_uid = kez_target
+        except Exception:
+            game.kezuvchi_restricted_uid = kez_target  # still track for auto-delete
+
+    if found_mafia and settings.komissar_auto_announce:
         fuid = found_mafia.get("uid")
         fp = game.get_player_by_id(fuid) if fuid else None
         if fp:
@@ -747,11 +824,9 @@ async def _do_night_resolution(bot: Bot, game: Game):
             f"🚨 <b>Komissar Mafia a'zosini fosh qildi!</b>\n\n"
             f"👤 {fmention}\n"
             f"🎭 Roli: {role_em} <b>{role_nm}</b>\n\n"
-            "⚖️ Endi darhol osish jarayoni boshlanadi!",
+            "💬 Muhokama qiling — ovoz berish broz boshlanadi.",
             parse_mode="HTML",
         )
-        await run_vote(bot, game.chat_id)
-        return
 
     await asyncio.sleep(settings.day_secs)
     await run_vote(bot, game.chat_id)
@@ -779,6 +854,8 @@ async def run_vote(bot: Bot, chat_id: int):
         reply_markup=vote_inline_kb,
     )
     game.vote_msg_id = vote_msg.message_id if vote_msg else None
+    if vote_msg:
+        await _auto_pin(bot, game, vote_msg.message_id)
     game.joker_pick = None  # reset target's choice for this vote
 
     # Send Joker cards to the selected target at the start of voting
@@ -1032,9 +1109,24 @@ async def _end_game(bot: Bot, game: Game, winner: str):
 
     reward_text = "\n\n💵 G'oliblarga mukofot berildi!" if winners else ""
 
-    newgame_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🎮 Yangi o'yin boshlash", callback_data=f"newgame_btn:{game.chat_id}")]
-    ])
+    bot_username_end = await _get_bot_username(bot)
+    _end_rows = [
+        [InlineKeyboardButton(text="🎮 Yangi o'yin boshlash", callback_data=f"newgame_btn:{game.chat_id}")],
+    ]
+    if bot_username_end:
+        _end_rows.append([
+            InlineKeyboardButton(text="🦸 Geroy",
+                url=f"https://t.me/{bot_username_end}?start=hero"),
+            InlineKeyboardButton(text="🎯 Mission",
+                url=f"https://t.me/{bot_username_end}?start=missions"),
+            InlineKeyboardButton(text="📦 Sandiq",
+                callback_data=f"open_sandiq:{game.chat_id}"),
+        ])
+    else:
+        _end_rows.append([
+            InlineKeyboardButton(text="📦 Sandiq", callback_data=f"open_sandiq:{game.chat_id}"),
+        ])
+    newgame_kb = InlineKeyboardMarkup(inline_keyboard=_end_rows)
 
     duration_secs = int(time.time() - (game.started_at or time.time()))
     mins, secs_rem = divmod(duration_secs, 60)
@@ -1047,7 +1139,9 @@ async def _end_game(bot: Bot, game: Game, winner: str):
         f"O'yin davomiyligi: {duration_str}"
         f"{reward_text}"
     )
-    await bot.send_message(game.chat_id, end_text, reply_markup=newgame_kb)
+    end_msg = await bot.send_message(game.chat_id, end_text, reply_markup=newgame_kb)
+    if end_msg:
+        await _auto_pin(bot, game, end_msg.message_id)
 
     for p in winners:
         reward = win_rewards.get(p.user_id, WIN_REWARD)
@@ -1444,10 +1538,12 @@ async def _open_lobby(msg: Message, bot: Bot):
     if existing and existing.phase == Phase.LOBBY:
         bot_username = await _get_bot_username(bot)
         sent = await msg.answer(
-            "📋 Ro'yxatga olish davom etmoqda!\n\n" + _lobby_text(existing),
+            _lobby_text_html(existing),
             reply_markup=_lobby_kb(chat_id, bot_username),
+            parse_mode="HTML",
         )
         existing.lobby_msg_id = sent.message_id
+        await _auto_pin(bot, existing, sent.message_id)
         return
 
     games[chat_id] = Game(chat_id=chat_id)
@@ -1458,10 +1554,12 @@ async def _open_lobby(msg: Message, bot: Bot):
 
     bot_username = await _get_bot_username(bot)
     sent = await msg.answer(
-        _lobby_text(game),
+        _lobby_text_html(game),
         reply_markup=_lobby_kb(chat_id, bot_username),
+        parse_mode="HTML",
     )
     game.lobby_msg_id = sent.message_id
+    await _auto_pin(bot, game, sent.message_id)
 
 
 async def _handle_private_join(msg: Message, bot: Bot, payload: str):
@@ -1610,64 +1708,55 @@ async def cmd_utag(msg: Message, bot: Bot):
 
     chat_id = msg.chat.id
 
-    # Collect known players from ratings DB + current game lobby
+    # Collect known players from ratings DB (historical players in this chat)
     from database import get_pool
-    known: dict[int, str] = {}  # user_id -> display_name
+    known: dict[int, str] = {}  # user_id -> first_name
 
-    # From ratings (historical players in this chat)
-    pool = get_pool()
-    if pool:
-        try:
-            async with pool.acquire() as conn:
-                rows = await conn.fetch(
-                    "SELECT user_id, first_name FROM ratings WHERE chat_id=$1", chat_id
-                )
-                for row in rows:
-                    if row["first_name"]:
-                        known[row["user_id"]] = row["first_name"]
-        except Exception:
-            pass
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT user_id, first_name FROM ratings WHERE chat_id=$1", chat_id
+            )
+            for row in rows:
+                if row["first_name"]:
+                    known[row["user_id"]] = row["first_name"]
+    except Exception:
+        pass
 
-    # From current game lobby (may have new players with usernames)
+    # Also include current game lobby players
     game = games.get(chat_id)
     if game and game.phase == Phase.LOBBY:
         for p in game.players.values():
-            if p.username:
-                known[p.user_id] = f"@{p.username}"  # prefer @username
-            elif p.first_name:
+            if p.first_name:
                 known[p.user_id] = p.first_name
 
     if not known:
-        return await msg.answer(
-            "🎮 <b>Mafiya o'yiniga taklif!</b>\n\n"
-            "Bu guruhda hali hech kim o'ynamagan. /game bilan ro'yxatni oching!",
-            parse_mode="HTML",
-        )
+        return await msg.answer("Bu guruhda hali hech kim o'ynamagan.")
 
-    # Build mention list (HTML)
-    mentions = []
-    for uid, name in known.items():
-        if name.startswith("@"):
-            mentions.append(name)
-        else:
-            safe_name = name.replace("<", "&lt;").replace(">", "&gt;").replace("&", "&amp;")
-            mentions.append(f'<a href="tg://user?id={uid}">{safe_name}</a>')
+    # Build UID mention list — verify each user is still a member, skip bots/left users
+    valid_mentions: list[str] = []
+    for uid, first_name in known.items():
+        try:
+            member = await bot.get_chat_member(chat_id, uid)
+            if member.status in ("left", "kicked", "banned"):
+                continue
+            if getattr(member.user, "is_bot", False):
+                continue
+        except Exception:
+            continue
+        safe = first_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        valid_mentions.append(f'<a href="tg://user?id={uid}">{safe}</a>')
 
-    header = (
-        "🎮 <b>Mafiya o'yiniga chaqiruv!</b>\n\n"
-        "O'yinga qo'shilish uchun /game bosing!\n\n"
-    )
-    footer = "\n\n👆 <b>O'yinga qo'shiling!</b>"
+    if not valid_mentions:
+        return await msg.answer("Hozirda aktiv a'zolar topilmadi.")
 
-    # Send in chunks of 30 mentions to stay within Telegram limits
+    # Send comma-separated mentions in chunks (~30 per message)
     chunk_size = 30
-    for i in range(0, len(mentions), chunk_size):
-        chunk = mentions[i:i + chunk_size]
-        is_first = (i == 0)
-        is_last = (i + chunk_size >= len(mentions))
-        text = (header if is_first else "") + " ".join(chunk) + (footer if is_last else "")
-        await msg.answer(text, parse_mode="HTML")
-        if not is_last:
+    for i in range(0, len(valid_mentions), chunk_size):
+        chunk = valid_mentions[i:i + chunk_size]
+        await msg.answer(", ".join(chunk), parse_mode="HTML")
+        if i + chunk_size < len(valid_mentions):
             await asyncio.sleep(0.5)
 
 
@@ -1708,6 +1797,26 @@ def _sozlash_main_kb(chat_id: int, settings: ChatSettings) -> InlineKeyboardMark
         if settings.labarant_show
         else "🧪 Labarantni ko'rish: ❌ O'chirilgan"
     )
+    kauto_label = (
+        "🚨 Komissar xabari: ✅ Yoqilgan"
+        if settings.komissar_auto_announce
+        else "🚨 Komissar xabari: ❌ O'chirilgan"
+    )
+    mstart_label = (
+        "👤 A'zo boshlashi: ✅ Yoqilgan"
+        if settings.member_can_start
+        else "👤 A'zo boshlashi: ❌ O'chirilgan"
+    )
+    apin_label = (
+        "📌 Avtomatik pin: ✅ Yoqilgan"
+        if settings.auto_pin
+        else "📌 Avtomatik pin: ❌ O'chirilgan"
+    )
+    hero_label = (
+        "🦸 Geroy tizimi: ✅ Yoqilgan"
+        if settings.hero_enabled
+        else "🦸 Geroy tizimi: ❌ O'chirilgan"
+    )
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🃏 Rollarni yoqish/o'chirish", callback_data=f"soz:roles:0:{chat_id}")],
         [InlineKeyboardButton(text="🎭 Rollarni sozlash (o'yinchilar soni bo'yicha)", callback_data=f"soz:rcfgc:0:{chat_id}")],
@@ -1716,6 +1825,10 @@ def _sozlash_main_kb(chat_id: int, settings: ChatSettings) -> InlineKeyboardMark
         [InlineKeyboardButton(text=autodel_label, callback_data=f"soz:toggle_autodel:{chat_id}")],
         [InlineKeyboardButton(text=atm_label, callback_data=f"soz:toggle_atm:{chat_id}")],
         [InlineKeyboardButton(text=lab_label, callback_data=f"soz:toggle_lab:{chat_id}")],
+        [InlineKeyboardButton(text=kauto_label, callback_data=f"soz:toggle_kauto:{chat_id}")],
+        [InlineKeyboardButton(text=mstart_label, callback_data=f"soz:toggle_memberstart:{chat_id}")],
+        [InlineKeyboardButton(text=apin_label, callback_data=f"soz:toggle_autopin:{chat_id}")],
+        [InlineKeyboardButton(text=hero_label, callback_data=f"soz:toggle_hero:{chat_id}")],
         [InlineKeyboardButton(text="⏳ Vaqtlarni sozlash", callback_data=f"soz:durations:{chat_id}")],
         [InlineKeyboardButton(text="✅ Yopish", callback_data=f"soz:close:{chat_id}")],
     ])
@@ -1979,6 +2092,46 @@ async def cb_sozlash(call: CallbackQuery):
             reply_markup=_sozlash_main_kb(chat_id, settings),
         )
 
+    elif action == "toggle_kauto":
+        settings.komissar_auto_announce = not settings.komissar_auto_announce
+        await save_settings(settings)
+        status = "yoqildi ✅" if settings.komissar_auto_announce else "o'chirildi ❌"
+        await call.answer(f"🚨 Komissar xabari {status}", show_alert=False)
+        await call.message.edit_text(
+            "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
+            reply_markup=_sozlash_main_kb(chat_id, settings),
+        )
+
+    elif action == "toggle_memberstart":
+        settings.member_can_start = not settings.member_can_start
+        await save_settings(settings)
+        status = "yoqildi ✅" if settings.member_can_start else "o'chirildi ❌"
+        await call.answer(f"👤 A'zo boshlashi {status}", show_alert=False)
+        await call.message.edit_text(
+            "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
+            reply_markup=_sozlash_main_kb(chat_id, settings),
+        )
+
+    elif action == "toggle_autopin":
+        settings.auto_pin = not settings.auto_pin
+        await save_settings(settings)
+        status = "yoqildi ✅" if settings.auto_pin else "o'chirildi ❌"
+        await call.answer(f"📌 Avtomatik pin {status}", show_alert=False)
+        await call.message.edit_text(
+            "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
+            reply_markup=_sozlash_main_kb(chat_id, settings),
+        )
+
+    elif action == "toggle_hero":
+        settings.hero_enabled = not settings.hero_enabled
+        await save_settings(settings)
+        status = "yoqildi ✅" if settings.hero_enabled else "o'chirildi ❌"
+        await call.answer(f"🦸 Geroy tizimi {status}", show_alert=False)
+        await call.message.edit_text(
+            "⚙️ *Guruh sozlamalari*\n\nQuyidagilardan birini tanlang:",
+            reply_markup=_sozlash_main_kb(chat_id, settings),
+        )
+
     elif action == "durations":
         await call.message.edit_text(
             "⏳ *Bosqich vaqtlarini sozlash*",
@@ -2175,8 +2328,12 @@ async def _launch_game(msg: Message, bot: Bot):
 
     member = await bot.get_chat_member(chat_id, msg.from_user.id)
     is_admin = member.status in ("administrator", "creator")
-    if not is_admin and msg.from_user.id not in game.players:
-        return await msg.answer("⚠️ Faqat admin yoki lobby o'yinchilari boshlashi mumkin.")
+    chat_settings_pre = await get_settings(chat_id)
+    if not is_admin:
+        if not chat_settings_pre.member_can_start:
+            return await msg.answer("⚠️ Bu guruhda faqat adminlar o'yinni boshlay oladi.")
+        if msg.from_user.id not in game.players:
+            return await msg.answer("⚠️ Faqat admin yoki lobby o'yinchilari boshlashi mumkin.")
 
     if len(game.players) < MIN_PLAYERS:
         return await msg.answer(
@@ -2980,6 +3137,8 @@ async def cb_newgame_btn(call: CallbackQuery, bot: Bot):
     existing = games.get(chat_id)
     if existing and existing.phase not in (Phase.LOBBY, Phase.ENDED):
         return await call.answer("⚠️ O'yin allaqachon davom etmoqda!", show_alert=True)
+    if existing and existing.phase == Phase.LOBBY:
+        return await call.answer("⚠️ Lobby allaqachon mavjud! Yangi lobby yaratib bo'lmaydi.", show_alert=True)
 
     games[chat_id] = Game(chat_id=chat_id)
     game = games[chat_id]
@@ -3763,13 +3922,23 @@ def _is_not_command(msg: Message) -> bool:
 
 @router.message(F.chat.type.in_({"group", "supergroup"}), _is_not_command)
 async def auto_delete_handler(msg: Message, bot: Bot):
-    """Auto-delete messages from dead players and spectators during active game."""
+    """Auto-delete messages from dead players, spectators, and Kezuvchi-blocked players."""
     chat_id = msg.chat.id
+    game = games.get(chat_id)
+
+    # Kezuvchi-blocked player: delete silently, no warning
+    if game and msg.from_user and game.kezuvchi_restricted_uid == msg.from_user.id:
+        if game.phase in (Phase.DAY, Phase.VOTING):
+            try:
+                await bot.delete_message(chat_id, msg.message_id)
+            except Exception:
+                pass
+            return
+
     settings = await get_settings(chat_id)
     if not settings.auto_delete_dead:
         return
 
-    game = games.get(chat_id)
     if not game or game.phase in (Phase.LOBBY, Phase.ENDED):
         return
 
@@ -3808,12 +3977,12 @@ async def cmd_hero(msg: Message):
     uid  = msg.from_user.id
     hero = await get_hero(uid)
     if hero:
-        await msg.answer(_hero_text(hero), reply_markup=_hero_panel_kb("noop"), parse_mode="Markdown")
+        await msg.answer(_hero_text(hero), reply_markup=_hero_panel_kb("noop", hero_level=hero.level), parse_mode="Markdown")
     else:
         await msg.answer(
             "🦸 *Sizda hali Geroy mavjud emas.*\n\n"
             "Geroy o'yinda kunduzi dushmanlarga hujum qilish imkonini beradi.\n\n"
-            f"💰 Narxi: *{HERO_BUY_COST}💶*",
+            f"💰 Narxi: *{HERO_BUY_COST}💎*",
             reply_markup=_no_hero_kb("noop"),
             parse_mode="Markdown",
         )
@@ -3889,6 +4058,34 @@ async def cmd_herogive(msg: Message, bot: Bot):
         pass
 
 
+@router.message(Command("geroy"))
+async def cmd_geroy(msg: Message):
+    """OWNER only: /geroy <daraja> <user_id> — creates/updates hero at given level."""
+    if msg.from_user.id != OWNER_ID:
+        return
+    parts = msg.text.split()
+    if len(parts) < 3:
+        return await msg.answer(
+            "❓ Foydalanish: `/geroy <daraja> <user_id>`",
+            parse_mode="Markdown",
+        )
+    try:
+        level   = int(parts[1])
+        user_id = int(parts[2])
+    except ValueError:
+        return await msg.answer("❌ Daraja va user_id raqam bo'lishi kerak.")
+    if level < 1:
+        return await msg.answer("❌ Daraja 1 dan kichik bo'lishi mumkin emas.")
+    hero = await get_hero(user_id) or Hero(user_id=user_id)
+    hero.level = level
+    hero.xp    = hero_level_threshold(level)
+    await save_hero(hero)
+    await msg.answer(
+        f"✅ *{user_id}* uchun Geroy darajasi *{level}* ga o'rnatildi.",
+        parse_mode="Markdown",
+    )
+
+
 # ── Profile navigation callbacks ──────────────────────────────
 
 @router.callback_query(F.data == "cb_profile_hero")
@@ -3903,7 +4100,7 @@ async def cb_profile_hero(call: CallbackQuery):
         text = (
             "🦸 *Sizda hali Geroy mavjud emas.*\n\n"
             "Geroy o'yinda kunduzi dushmanlarga hujum qilish imkonini beradi.\n\n"
-            f"💰 Narxi: *{HERO_BUY_COST}💶*"
+            f"💰 Narxi: *{HERO_BUY_COST}💎*"
         )
         kb = _no_hero_kb("cb_profile_back")
     try:
@@ -3965,11 +4162,11 @@ async def cb_hero_info(call: CallbackQuery):
             f"👊 Zarba kuchi: *40–50 HP* (1-darajada)\n"
             f"🛡 Maksimal himoya: *{MAX_HP} HP*\n"
             f"🩸 Maksimal zaryad: *{MAX_CHARGES} ta*\n\n"
-            f"💰 Sotib olish narxi: *{HERO_BUY_COST}💶*\n\n"
+            f"💰 Sotib olish narxi: *{HERO_BUY_COST}💎*\n\n"
             "Geroy profilda doimiy saqlanadi. Har bir o'yin kunida bir marta hujum qilish mumkin.",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
-                    text=f"💰 Sotib olish ({HERO_BUY_COST}💶)",
+                    text=f"💰 Sotib olish ({HERO_BUY_COST}💎)",
                     callback_data="hero_buy")],
                 [InlineKeyboardButton(text="◀️ Orqaga", callback_data="cb_profile_back")],
             ]),
@@ -3985,11 +4182,11 @@ async def cb_hero_buy(call: CallbackQuery):
     existing = await get_hero(uid)
     if existing:
         return await call.answer("✅ Sizda allaqachon Geroy bor!", show_alert=True)
-    ok = await spend_dollar(uid, HERO_BUY_COST)
+    ok = await spend_diamond(uid, HERO_BUY_COST)
     if not ok:
         p = await get_profile(uid)
         return await call.answer(
-            f"❌ Yetarli dollar yo'q!\nKerak: {HERO_BUY_COST}💶  |  Sizda: {p.dollar}💶",
+            f"❌ Yetarli olmos yo'q!\nKerak: {HERO_BUY_COST}💎  |  Sizda: {p.diamond}💎",
             show_alert=True,
         )
     hero = Hero(user_id=uid)
@@ -3998,7 +4195,7 @@ async def cb_hero_buy(call: CallbackQuery):
     try:
         await call.message.edit_text(
             _hero_text(hero),
-            reply_markup=_hero_panel_kb("cb_profile_back"),
+            reply_markup=_hero_panel_kb("cb_profile_back", hero_level=1),
             parse_mode="Markdown",
         )
     except Exception:
@@ -4027,7 +4224,7 @@ async def cb_hero_recharge(call: CallbackQuery):
     await call.answer(f"✅ Zaryad to'ldirildi! 🩸 {MAX_CHARGES}/{MAX_CHARGES}", show_alert=False)
     try:
         await call.message.edit_text(
-            _hero_text(hero), reply_markup=_hero_panel_kb("cb_profile_back"), parse_mode="Markdown"
+            _hero_text(hero), reply_markup=_hero_panel_kb("cb_profile_back", hero_level=hero.level), parse_mode="Markdown"
         )
     except Exception:
         pass
@@ -4055,7 +4252,7 @@ async def cb_hero_restore(call: CallbackQuery):
     await call.answer(f"✅ Himoya tiklandi! 🛡 {MAX_HP}/{MAX_HP}", show_alert=False)
     try:
         await call.message.edit_text(
-            _hero_text(hero), reply_markup=_hero_panel_kb("cb_profile_back"), parse_mode="Markdown"
+            _hero_text(hero), reply_markup=_hero_panel_kb("cb_profile_back", hero_level=hero.level), parse_mode="Markdown"
         )
     except Exception:
         pass
@@ -4084,7 +4281,35 @@ async def cb_hero_buy_xp(call: CallbackQuery):
     await call.answer(msg_txt[:200], show_alert=bool(awards))
     try:
         await call.message.edit_text(
-            _hero_text(hero), reply_markup=_hero_panel_kb("cb_profile_back"), parse_mode="Markdown"
+            _hero_text(hero), reply_markup=_hero_panel_kb("cb_profile_back", hero_level=hero.level), parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data == "hero_upgrade")
+async def cb_hero_upgrade(call: CallbackQuery):
+    uid  = call.from_user.id
+    hero = await get_hero(uid)
+    if not hero:
+        return await call.answer("❌ Sizda Geroy yo'q.", show_alert=True)
+    cost = hero_upgrade_cost(hero.level)
+    ok   = await spend_diamond(uid, cost)
+    if not ok:
+        p = await get_profile(uid)
+        return await call.answer(
+            f"❌ Yetarli olmos yo'q!\nKerak: {cost}💎  |  Sizda: {p.diamond}💎",
+            show_alert=True,
+        )
+    hero.level += 1
+    hero.xp     = hero_level_threshold(hero.level)
+    await save_hero(hero)
+    await call.answer(f"✅ Daraja oshirildi! ⭐ {hero.level}-daraja", show_alert=False)
+    try:
+        await call.message.edit_text(
+            _hero_text(hero),
+            reply_markup=_hero_panel_kb("cb_profile_back", hero_level=hero.level),
+            parse_mode="Markdown",
         )
     except Exception:
         pass
@@ -4149,6 +4374,10 @@ async def cb_hero_attack_kb(call: CallbackQuery):
 
     if not game or game.phase != Phase.DAY:
         return await call.answer("❌ Hozir hujum qilish mumkin emas.", show_alert=True)
+
+    _settings_hero = await get_settings(cid)
+    if not _settings_hero.hero_enabled:
+        return await call.answer("❌ Bu guruhda Geroy tizimi o'chirilgan.", show_alert=True)
     player = game.get_player_by_id(uid)
     if not player or not player.alive:
         return await call.answer("❌ Siz o'yinda yo'qsiz.", show_alert=True)
@@ -4211,6 +4440,10 @@ async def cb_hero_attack(call: CallbackQuery, bot: Bot):
         return await call.answer("❌ Sizning rolingiz bu imkoniyatdan foydalana olmaydi.", show_alert=True)
     if uid in game.hero_used_today:
         return await call.answer("❌ Bugun allaqachon hujum qildingiz.", show_alert=True)
+
+    _settings_hero_a = await get_settings(cid)
+    if not _settings_hero_a.hero_enabled:
+        return await call.answer("❌ Bu guruhda Geroy tizimi o'chirilgan.", show_alert=True)
 
     hero = await get_hero(uid)
     if not hero or hero.charges <= 0:
@@ -4307,6 +4540,187 @@ async def cb_hero_attack(call: CallbackQuery, bot: Bot):
             await call.message.edit_text(dm_text, parse_mode="Markdown")
         except Exception:
             pass
+
+
+# ── Sandiq (Chest) callbacks ──────────────────────────────────
+
+@router.callback_query(F.data.startswith("open_sandiq:"))
+async def cb_open_sandiq(call: CallbackQuery, bot: Bot):
+    """End-game tugmasidan: foydalanuvchiga DM sandiq tanlash klaviaturasini yuboradi."""
+    await call.answer()
+    uid  = call.from_user.id
+    cid  = int(call.data.split(":")[1])
+
+    can_oltin, remaining = await can_open_oltin(uid)
+    oltin_label = (
+        f"🟡 Oltin sandiq ({OLTIN_COST}💎) — {remaining}/{OLTIN_LIMIT} qoldi"
+        if can_oltin else
+        f"🟡 Oltin sandiq — bugungi limit tugadi"
+    )
+    rows = [
+        [InlineKeyboardButton(
+            text=f"⬜ Oddiy sandiq ({ODDIY_COST}💶)",
+            callback_data=f"sandiq_type:oddiy:{cid}")],
+        [InlineKeyboardButton(
+            text=f"🟣 Noyob sandiq ({NOYOB_COST}💶)",
+            callback_data=f"sandiq_type:noyob:{cid}")],
+        [InlineKeyboardButton(
+            text=oltin_label,
+            callback_data=f"sandiq_type:oltin:{cid}" if can_oltin else "noop")],
+        [InlineKeyboardButton(text="❌ Yopish", callback_data="sandiq_close")],
+    ]
+    try:
+        await bot.send_message(
+            uid,
+            "📦 *Sandiq ochish*\n\nQaysi sandiqni ochmoqchisiz?",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+            parse_mode="Markdown",
+        )
+        await call.answer("📬 DM ga sandiq yuborildi!", show_alert=False)
+    except Exception:
+        await call.answer("❌ Avval botga /start yuboring.", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("sandiq_type:"))
+async def cb_sandiq_type(call: CallbackQuery):
+    """Sandiq turi tanlandi — to'lov amalga oshiriladi va 6 quti ko'rsatiladi."""
+    parts      = call.data.split(":")
+    chest_type = parts[1]          # oddiy / noyob / oltin
+    uid        = call.from_user.id
+
+    # To'lov
+    if chest_type == "oddiy":
+        ok = await spend_dollar(uid, ODDIY_COST)
+        if not ok:
+            p = await get_profile(uid)
+            return await call.answer(
+                f"❌ Yetarli dollar yo'q!\nKerak: {ODDIY_COST}💶  |  Sizda: {p.dollar}💶",
+                show_alert=True,
+            )
+    elif chest_type == "noyob":
+        ok = await spend_dollar(uid, NOYOB_COST)
+        if not ok:
+            p = await get_profile(uid)
+            return await call.answer(
+                f"❌ Yetarli dollar yo'q!\nKerak: {NOYOB_COST}💶  |  Sizda: {p.dollar}💶",
+                show_alert=True,
+            )
+    elif chest_type == "oltin":
+        can, _ = await can_open_oltin(uid)
+        if not can:
+            return await call.answer("❌ Bugungi oltin sandiq limitiga yetdingiz.", show_alert=True)
+        ok = await spend_diamond(uid, OLTIN_COST)
+        if not ok:
+            p = await get_profile(uid)
+            return await call.answer(
+                f"❌ Yetarli olmos yo'q!\nKerak: {OLTIN_COST}💎  |  Sizda: {p.diamond}💎",
+                show_alert=True,
+            )
+        await record_oltin_open(uid)
+    else:
+        return await call.answer("❌ Noto'g'ri sandiq turi.", show_alert=True)
+
+    session = start_session(uid, chest_type)
+    picks   = session["picks_left"]
+
+    # 6 ta quti tugmasi
+    rows = []
+    for i in range(6):
+        rows.append([InlineKeyboardButton(
+            text="📦",
+            callback_data=f"sandiq_pick:{i}",
+        )])
+    # 2 ustunli tartib: 3 qator × 2
+    rows_2col = []
+    flat = [InlineKeyboardButton(text="📦", callback_data=f"sandiq_pick:{i}") for i in range(6)]
+    for i in range(0, 6, 2):
+        rows_2col.append(flat[i:i+2])
+
+    type_name = {"oddiy": "⬜ Oddiy", "noyob": "🟣 Noyob", "oltin": "🟡 Oltin"}.get(chest_type, chest_type)
+    await call.answer()
+    try:
+        await call.message.edit_text(
+            f"📦 *{type_name} sandiq*\n\n{picks} ta quti tanlashingiz mumkin.\nQutini tanlang:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=rows_2col),
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+
+
+@router.callback_query(F.data.startswith("sandiq_pick:"))
+async def cb_sandiq_pick(call: CallbackQuery):
+    """Quti tanlandi — natija ko'rsatiladi."""
+    idx = int(call.data.split(":")[1])
+    uid = call.from_user.id
+
+    session = get_session(uid)
+    if not session:
+        return await call.answer("❌ Sessiya tugagan. Qayta boshlang.", show_alert=True)
+
+    if idx in session["picked"]:
+        return await call.answer("❌ Bu quti allaqachon ochilgan.", show_alert=True)
+
+    session["picked"].append(idx)
+    session["picks_left"] -= 1
+
+    reward_text = await apply_box_reward(uid, session["boxes"][idx])
+
+    if session["picks_left"] > 0:
+        # Hali tanlashlar qoldi — qutini ochiq ko'rsat, boshqalari yopiq
+        flat = []
+        for i in range(6):
+            if i in session["picked"]:
+                label = box_emoji(session["boxes"][i], revealed=True)
+            else:
+                label = "📦"
+            flat.append(InlineKeyboardButton(
+                text=label,
+                callback_data=f"sandiq_pick:{i}" if i not in session["picked"] else "noop",
+            ))
+        rows_2col = [flat[i:i+2] for i in range(0, 6, 2)]
+        await call.answer(f"✅ {reward_text}", show_alert=False)
+        try:
+            await call.message.edit_reply_markup(
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows_2col)
+            )
+        except Exception:
+            pass
+    else:
+        # Barcha tanlashlar tugadi — hammasini ko'rsat
+        clear_session(uid)
+        flat = []
+        for i in range(6):
+            if i in session["picked"]:
+                label = box_emoji(session["boxes"][i], revealed=True)
+            else:
+                label = box_emoji(session["boxes"][i], revealed=True)  # reveal all at end
+            flat.append(InlineKeyboardButton(text=label, callback_data="noop"))
+        rows_2col = [flat[i:i+2] for i in range(0, 6, 2)]
+
+        type_name = {"oddiy": "⬜ Oddiy", "noyob": "🟣 Noyob", "oltin": "🟡 Oltin"}.get(
+            session["type"], session["type"]
+        )
+        await call.answer(f"🎉 {reward_text}", show_alert=True)
+        try:
+            await call.message.edit_text(
+                f"📦 *{type_name} sandiq — Natija*\n\n"
+                f"Sizga tegdi: *{reward_text}*\n\n"
+                "Barcha qutular:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=rows_2col),
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
+
+
+@router.callback_query(F.data == "sandiq_close")
+async def cb_sandiq_close(call: CallbackQuery):
+    await call.answer()
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
 
 
 # ──────────────────────────────────────────────

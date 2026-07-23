@@ -12,7 +12,7 @@ MAX_CHARGES         = 10
 HP_RESTORE_COST     = 1200   # dollar
 CHARGE_RESTORE_COST = 1300   # dollar
 NAME_CHANGE_COST    = 2500   # dollar
-HERO_BUY_COST       = 3000   # dollar
+HERO_BUY_COST       = 90     # diamond
 XP_BUY_COST         = 500    # dollar
 XP_BUY_AMOUNT       = 100    # ball
 XP_PER_ATTACK       = 5
@@ -38,6 +38,11 @@ def hero_level_from_xp(xp: int) -> int:
     while level < 100 and xp >= hero_level_threshold(level + 1):
         level += 1
     return level
+
+
+def hero_upgrade_cost(level: int) -> int:
+    """Ushbu darajadan keyingisiga oshirish narxi (olmos). N→N+1 = (N+2)×10."""
+    return (level + 2) * 10
 
 
 def hero_damage(level: int) -> int:

@@ -238,6 +238,10 @@ class Game:
     creator_id: Optional[int] = None
     # Hero system: tracks which UIDs already used hero this day
     hero_used_today: set = field(default_factory=set)
+    # Kezuvchi: UID restricted from writing until next night
+    kezuvchi_restricted_uid: Optional[int] = None
+    # Auto-pin: message_id of currently pinned message
+    pinned_msg_id: Optional[int] = None
 
     def add_player(self, user_id: int, username: str, first_name: str, last_name: str = "") -> bool:
         if user_id in self.players or len(self.players) >= MAX_PLAYERS:

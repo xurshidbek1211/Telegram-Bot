@@ -451,18 +451,25 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
     if tulki_new_role and tulki and tulki.alive:
         tulki.role = tulki_new_role
         if tulki_new_role == Role.MAFIA:
+            # List Don + visible Mafia allies for Tulki
+            mafia_allies = [game.get_display_name(p) for p in game.alive_players()
+                            if p.role in (Role.DON, Role.MAFIA) and p.user_id != tulki.user_id]
+            ally_txt = ("\n🤝 Jamoa: " + ", ".join(mafia_allies)) if mafia_allies else ""
             await _dm(bot, tulki.user_id,
-                "🦊 Tanlagan nishoningiz Mafiya ekan — siz *Mafiaga aylandingiz!*\n"
+                f"🦊 Tanlagan nishoningiz Mafiya ekan — siz *Mafiaga aylandingiz!*{ally_txt}\n"
                 "Keyingi tundan boshlab Mafiya bilan ishlaysiz.")
-            # Notify Don + visible Mafia teammates
+            # Notify ONLY Don + Mafia (not YQ, Advokat, etc.)
             for p in game.alive_players():
-                if p.role in (Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL,
-                               Role.ADVOKAT, Role.JURNALIST, Role.AYGOQCHI) and p.user_id != tulki.user_id:
+                if p.role in (Role.DON, Role.MAFIA) and p.user_id != tulki.user_id:
                     await _dm(bot, p.user_id,
                         f"🦊 *{game.get_display_name(tulki)}* Mafiaga qo'shildi! Endi jamoadosh.")
         elif tulki_new_role == Role.SERZHANT:
+            # List Komissar + Serzhant allies for Tulki
+            law_allies = [game.get_display_name(p) for p in game.alive_players()
+                          if p.role in (Role.KOMISSAR, Role.SERZHANT) and p.user_id != tulki.user_id]
+            ally_txt = ("\n👮 Sheriklaring: " + ", ".join(law_allies)) if law_allies else ""
             await _dm(bot, tulki.user_id,
-                "🦊 Tanlagan nishoningiz tinch aholi ekan — siz *Serjantga aylandingiz!*")
+                f"🦊 Tanlagan nishoningiz tinch aholi ekan — siz *Serjantga aylandingiz!*{ally_txt}")
             # Notify Komissar + all Serjants
             for p in game.alive_players():
                 if p.role in (Role.KOMISSAR, Role.SERZHANT) and p.user_id != tulki.user_id:

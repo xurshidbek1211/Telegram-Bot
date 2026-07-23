@@ -43,6 +43,13 @@ async def init_db():
                 active_roles JSONB DEFAULT '[]'::jsonb
             )
         """)
+        # Migrate: add oltin_sandiq columns if absent
+        await conn.execute("""
+            ALTER TABLE profiles ADD COLUMN IF NOT EXISTS oltin_sandiq_date TEXT DEFAULT '';
+        """)
+        await conn.execute("""
+            ALTER TABLE profiles ADD COLUMN IF NOT EXISTS oltin_sandiq_count INTEGER DEFAULT 0;
+        """)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS game_stats (
                 id INTEGER PRIMARY KEY DEFAULT 1,
