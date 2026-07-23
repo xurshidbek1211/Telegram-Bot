@@ -511,6 +511,14 @@ def _komissar_target_kb(game: Game, prefix: str, actor_id: int = None) -> Inline
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _with_skip(kb: InlineKeyboardMarkup, chat_id: int) -> InlineKeyboardMarkup:
+    """Append ⏭ O'tkazib yuborish row to any night-action keyboard."""
+    rows = list(kb.inline_keyboard) + [[
+        InlineKeyboardButton(text="⏭ O'tkazib yuborish", callback_data=f"night_skip:{chat_id}")
+    ]]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def _vote_kb(game: Game, voter_id: int) -> InlineKeyboardMarkup:
     rows = []
     for p in game.alive_players():
@@ -569,7 +577,7 @@ async def run_night(bot: Bot, chat_id: int):
     )
     night_msg = await bot.send_message(
         chat_id,
-        f"🌙 Tun\n\nTirik o'yinchilar:\n\n{alive_list_night}\n\n"
+        f"Tun\n\nTirik o'yinchilar:\n\n{alive_list_night}\n\n"
         f"⏳ Tonggacha: {settings.night_secs} sekund",
         reply_markup=_dm_entry_kb(bot_username, "🤖 Botga kirish", chat_id, "group"),
     )
@@ -823,8 +831,7 @@ async def _do_night_resolution(bot: Bot, game: Game):
             bot, game.chat_id,
             f"🚨 <b>Komissar Mafia a'zosini fosh qildi!</b>\n\n"
             f"👤 {fmention}\n"
-            f"🎭 Roli: {role_em} <b>{role_nm}</b>\n\n"
-            "💬 Muhokama qiling — ovoz berish broz boshlanadi.",
+            f"🎭 Roli: {role_em} <b>{role_nm}</b>",
             parse_mode="HTML",
         )
 
@@ -959,7 +966,7 @@ async def _do_vote_resolution(bot: Bot, game: Game):
         await bot.send_message(
             game.chat_id,
             "Ovoz berish natijalari:\n\n"
-            "⚖️ Tenglashdi! Bugun hech kim chiqarilmadi.\n\n🌙 Kecha tushdi...",
+            "⚖️ Tenglashdi! Bugun hech kim chiqarilmadi.\n\nKecha tushdi...",
         )
         game.day_number += 1
         await run_night(bot, game.chat_id)
@@ -984,7 +991,7 @@ async def _do_vote_resolution(bot: Bot, game: Game):
             game.chat_id,
             f"Ovoz berish natijalari:\n\n"
             f"🛡️ *Advokat himoyasi* sababli *{game.get_display_name(eliminated)}* osilmadi.\n\n"
-            "🌙 Kecha tushdi...",
+            "Kecha tushdi...",
         )
         game.day_number += 1
         await run_night(bot, game.chat_id)
@@ -1052,7 +1059,7 @@ async def _do_vote_resolution(bot: Bot, game: Game):
         await _end_game(bot, game, winner)
         return
 
-    await _safe_send(bot, game.chat_id, msg + "\n\n🌙 Kecha tushdi...", parse_mode="HTML")
+    await _safe_send(bot, game.chat_id, msg + "\n\nKecha tushdi...", parse_mode="HTML")
     game.day_number += 1
     await run_night(bot, game.chat_id)
 
@@ -1110,23 +1117,9 @@ async def _end_game(bot: Bot, game: Game, winner: str):
     reward_text = "\n\n💵 G'oliblarga mukofot berildi!" if winners else ""
 
     bot_username_end = await _get_bot_username(bot)
-    _end_rows = [
+    newgame_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🎮 Yangi o'yin boshlash", callback_data=f"newgame_btn:{game.chat_id}")],
-    ]
-    if bot_username_end:
-        _end_rows.append([
-            InlineKeyboardButton(text="🦸 Geroy",
-                url=f"https://t.me/{bot_username_end}?start=hero"),
-            InlineKeyboardButton(text="🎯 Mission",
-                url=f"https://t.me/{bot_username_end}?start=missions"),
-            InlineKeyboardButton(text="📦 Sandiq",
-                callback_data=f"open_sandiq:{game.chat_id}"),
-        ])
-    else:
-        _end_rows.append([
-            InlineKeyboardButton(text="📦 Sandiq", callback_data=f"open_sandiq:{game.chat_id}"),
-        ])
-    newgame_kb = InlineKeyboardMarkup(inline_keyboard=_end_rows)
+    ])
 
     duration_secs = int(time.time() - (game.started_at or time.time()))
     mins, secs_rem = divmod(duration_secs, 60)
@@ -1142,6 +1135,34 @@ async def _end_game(bot: Bot, game: Game, winner: str):
     end_msg = await bot.send_message(game.chat_id, end_text, reply_markup=newgame_kb)
     if end_msg:
         await _auto_pin(bot, game, end_msg.message_id)
+
+    # Send Geroy / Mission / Sandiq buttons privately to each player
+    if bot_username_end:
+        dm_rows = [
+            [
+                InlineKeyboardButton(text="🦸 Geroy",
+                    url=f"https://t.me/{bot_username_end}?start=hero"),
+                InlineKeyboardButton(text="🎯 Mission",
+                    url=f"https://t.me/{bot_username_end}?start=missions"),
+            ],
+            [InlineKeyboardButton(text="📦 Sandiq", callback_data=f"open_sandiq:{game.chat_id}")],
+        ]
+    else:
+        dm_rows = [
+            [InlineKeyboardButton(text="📦 Sandiq", callback_data=f"open_sandiq:{game.chat_id}")],
+        ]
+    dm_kb = InlineKeyboardMarkup(inline_keyboard=dm_rows)
+    for p in game.players.values():
+        if not p.role:
+            continue
+        try:
+            await bot.send_message(
+                p.user_id,
+                "🎮 O'yin tugadi! Quyidagi imkoniyatlardan foydalaning:",
+                reply_markup=dm_kb,
+            )
+        except Exception:
+            pass
 
     for p in winners:
         reward = win_rewards.get(p.user_id, WIN_REWARD)
@@ -1197,24 +1218,24 @@ async def _send_night_actions(bot: Bot, game: Game):
         if role == Role.DON:
             # LABARANT is in MAFIA_TEAM but Mafia doesn't know — keep them targetable
             targets = [p for p in alive if p.role not in MAFIA_TEAM or p.role == Role.LABARANT]
-            kb = InlineKeyboardMarkup(inline_keyboard=[
+            kb = _with_skip(InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=game.get_display_name(p), callback_data=f"nk:{p.user_id}:{chat_id}")]
                 for p in targets
-            ])
+            ]), chat_id)
             allies = [game.get_display_name(p) for p in alive
                       if p.role == Role.MAFIA or (lab_show and p.role == Role.LABARANT)]
             ally_txt = f"\n🤝 Mafiya: {', '.join(allies)}" if allies else ""
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*{ally_txt}\n\n"
+                f"*{game.day_number}-kecha*{ally_txt}\n\n"
                 f"🤵🏻 *Don:* o'ldirish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.MAFIA:
             # LABARANT is in MAFIA_TEAM but Mafia doesn't know — keep them targetable
             targets = [p for p in alive if p.role not in MAFIA_TEAM or p.role == Role.LABARANT]
-            kb = InlineKeyboardMarkup(inline_keyboard=[
+            kb = _with_skip(InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=game.get_display_name(p), callback_data=f"nk:{p.user_id}:{chat_id}")]
                 for p in targets
-            ])
+            ]), chat_id)
             don = game.get_alive_by_role(Role.DON)
             leader = f"Don: {game.get_display_name(don)}" if don else "Siz lider"
             # Show LABARANT in allies list only if labarant_show is enabled
@@ -1222,22 +1243,22 @@ async def _send_night_actions(bot: Bot, game: Game):
                       and (lab_show or p.role != Role.LABARANT) and p.user_id != uid]
             ally_txt = f"\n🤝 Jamoa: {', '.join(allies)}" if allies else ""
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n_{leader}_{ally_txt}\n\n"
+                f"*{game.day_number}-kecha*\n_{leader}_{ally_txt}\n\n"
                 f"🤵🏼 Nishon tanlang ({secs}s):", kb)
 
         elif role == Role.YOLLANMA_QOTIL:
             # LABARANT is in MAFIA_TEAM but YQ doesn't know — keep them targetable
             targets = [p for p in alive if p.role not in MAFIA_TEAM or p.role == Role.LABARANT]
-            kb = InlineKeyboardMarkup(inline_keyboard=[
+            kb = _with_skip(InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=game.get_display_name(p), callback_data=f"nyq:{p.user_id}:{chat_id}")]
                 for p in targets
-            ])
+            ]), chat_id)
             # Show LABARANT in allies list only if labarant_show is enabled
             allies = [game.get_display_name(p) for p in alive if p.role in MAFIA_TEAM
                       and (lab_show or p.role != Role.LABARANT)]
             ally_txt = f"\n🤝 Mafiya jamoasi: {', '.join(allies)}" if allies else ""
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*{ally_txt}\n\n"
+                f"*{game.day_number}-kecha*{ally_txt}\n\n"
                 f"🥷 Nishon tanlang — ⚠️ Komissarni tanlasangiz, u sizni o'ldiradi! ({secs}s):", kb)
 
         elif role == Role.ADVOKAT:
@@ -1247,100 +1268,100 @@ async def _send_night_actions(bot: Bot, game: Game):
                 game.night_actions[Role.ADVOKAT] = uid
                 game.night_acted_uids.add(uid)
                 await _dm(bot, uid,
-                    f"🌙 *{game.day_number}-kecha*\n\n"
+                    f"*{game.day_number}-kecha*\n\n"
                     "👨🏼‍💼 Himoya qilish uchun boshqa o'yinchi yo'q. Harakatingiz o'tkazib yuborildi.")
             else:
-                kb = _mafia_target_kb(game, "nadv", actor_id=uid)
+                kb = _with_skip(_mafia_target_kb(game, "nadv", actor_id=uid), chat_id)
                 await _dm(bot, uid,
-                    f"🌙 *{game.day_number}-kecha*\n\n"
+                    f"*{game.day_number}-kecha*\n\n"
                     f"👨🏼‍💼 Ertangi ovozda osishdan himoya qilish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.JURNALIST:
-            kb = _mafia_target_kb(game, "njurn", actor_id=uid)
+            kb = _with_skip(_mafia_target_kb(game, "njurn", actor_id=uid), chat_id)
             # Show LABARANT in allies list only if labarant_show is enabled
             allies = [game.get_display_name(p) for p in alive if p.role in MAFIA_TEAM and (lab_show or p.role != Role.LABARANT)]
             ally_txt = f"\n🤝 Mafiya jamoasi: {', '.join(allies)}" if allies else ""
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*{ally_txt}\n\n"
+                f"*{game.day_number}-kecha*{ally_txt}\n\n"
                 f"👩🏼‍💻 Intervyu olish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.KOMISSAR:
-            kb = InlineKeyboardMarkup(inline_keyboard=[[
+            kb = _with_skip(InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="🔍 Tekshirish", callback_data=f"nkommode:check:{chat_id}"),
                 InlineKeyboardButton(text="🔫 O'ldirish", callback_data=f"nkommode:kill:{chat_id}"),
-            ]])
+            ]]), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"🕵🏼 Bu kecha nima qilasiz ({secs}s)?", kb)
 
         elif role == Role.SERZHANT and not game.get_alive_by_role(Role.KOMISSAR):
-            kb = InlineKeyboardMarkup(inline_keyboard=[[
+            kb = _with_skip(InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="🔍 Tekshirish", callback_data=f"nkommode:check:{chat_id}"),
                 InlineKeyboardButton(text="🔫 O'ldirish", callback_data=f"nkommode:kill:{chat_id}"),
-            ]])
+            ]]), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"👮🏼 Siz hozir Komissar vazifasini bajaryapsiz. Nima qilasiz ({secs}s)?", kb)
 
         elif role == Role.LABARANT:
-            kb = _mafia_target_kb(game, "nlab", actor_id=uid)
+            kb = _with_skip(_mafia_target_kb(game, "nlab", actor_id=uid), chat_id)
             lab_allies = [game.get_display_name(p) for p in alive
                           if p.role in MAFIA_TEAM and p.role != Role.LABARANT] if lab_show else []
             lab_ally_txt = f"\n🤝 Mafiya jamoasi: {', '.join(lab_allies)}" if lab_allies else ""
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*{lab_ally_txt}\n\n"
+                f"*{game.day_number}-kecha*{lab_ally_txt}\n\n"
                 f"🧪 O'yinchi tanlang — Mafiya bo'lsa himoya qilasiz, boshqa bo'lsa zaharlaysiz ({secs}s):", kb)
 
         elif role == Role.DOCTOR:
-            kb = _target_kb(game, "ndoc", actor_id=uid, include_self=True)
+            kb = _with_skip(_target_kb(game, "ndoc", actor_id=uid, include_self=True), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"💊 Himoya qilish uchun o'yinchini tanlang (o'zingizni ham) ({secs}s):", kb)
 
         elif role == Role.KEZUVCHI:
-            kb = _target_kb(game, "nkez", actor_id=uid)
+            kb = _with_skip(_target_kb(game, "nkez", actor_id=uid), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
-                f"💃 Uyqu dori berish uchun o'yinchini tanlang — u bu kecha harakatsiz ({secs}s):", kb)
+                f"*{game.day_number}-kecha*\n\n"
+                f"💃 Uyqu dori berish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.DAYDI:
-            kb = _target_kb(game, "nday", actor_id=uid)
+            kb = _with_skip(_target_kb(game, "nday", actor_id=uid), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"🍾 Tashrif buyurish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.QOTIL:
-            kb = _target_kb(game, "nqot", actor_id=uid)
+            kb = _with_skip(_target_kb(game, "nqot", actor_id=uid), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"🔪 O'ldirish uchun nishon tanlang ({secs}s):", kb)
 
         elif role == Role.KIMYOGAR:
-            kb = InlineKeyboardMarkup(inline_keyboard=[[
+            kb = _with_skip(InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text="🩺 Davolash", callback_data=f"nkimmode:heal:{chat_id}"),
                 InlineKeyboardButton(text="☠️ O'ldirish", callback_data=f"nkimmode:kill:{chat_id}"),
-            ]])
+            ]]), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"👨‍🔬 Bu kecha nima qilasiz ({secs}s)?", kb)
 
         elif role == Role.MINIOR:
-            kb = _target_kb(game, "nmin", actor_id=uid)
+            kb = _with_skip(_target_kb(game, "nmin", actor_id=uid), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"☠️ Mina qo'yish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.AFERIST:
-            kb = _target_kb(game, "nafer", actor_id=uid)
+            kb = _with_skip(_target_kb(game, "nafer", actor_id=uid), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"🤹🏻 Kimning ovoz berish shaxsini almashtirmoqchisiz ({secs}s)?", kb)
 
         elif role == Role.GAZABKOR:
-            kb = _target_kb(game, "ngaz", actor_id=uid, include_self=True)
+            kb = _with_skip(_target_kb(game, "ngaz", actor_id=uid, include_self=True), chat_id)
             count = len(player.gazabkor_targets)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"🧟 Ro'yxatga o'yinchi qo'shing (hozir *{count}* ta). "
                 f"O'zingizni tanlasangiz, barchasi o'ladi (g'alaba uchun kamida 3 ta) ({secs}s):", kb)
 
@@ -1348,12 +1369,12 @@ async def _send_night_actions(bot: Bot, game: Game):
             # Joker picks which of the 4 face-down cards is the Death Card,
             # then picks a target. The cards are sent to the target at voting start.
             card_labels = ["🎴 1", "🎴 2", "🎴 3", "🎴 4"]
-            kb = InlineKeyboardMarkup(inline_keyboard=[
+            kb = _with_skip(InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=label, callback_data=f"jokcard:{i}:{chat_id}")]
                 for i, label in enumerate(card_labels)
-            ])
+            ]), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"🤡 *O'lim kartasini tanlang:* 4 ta karta orasida aynan qaysi biri o'lim kartasi?\n"
                 f"Tanlangan kartani maqsadli o'yinchiga ovoz berish bosqachasida yuboramiz. ({secs}s):", kb)
 
@@ -1365,19 +1386,19 @@ async def _send_night_actions(bot: Bot, game: Game):
                     for p in suspects
                 ] + [[InlineKeyboardButton(text="⏭️ O'tkazib yuborish", callback_data=f"nsot:0:{chat_id}")]]
                 await _dm(bot, uid,
-                    f"🌙 *{game.day_number}-kecha*\n\n"
+                    f"*{game.day_number}-kecha*\n\n"
                     f"🤓 Kimni fosh qilmoqchisiz ({secs}s)?",
                     InlineKeyboardMarkup(inline_keyboard=rows))
             else:
                 game.night_actions[Role.SOTQIN] = 0
                 game.night_acted_uids.add(uid)
                 await _dm(bot, uid,
-                    f"🌙 *{game.day_number}-kecha*\n\n🤓 Fosh qilish uchun ma'lum nishon yo'q.")
+                    f"*{game.day_number}-kecha*\n\n🤓 Fosh qilish uchun ma'lum nishon yo'q.")
 
         elif role == Role.TULKI:
-            kb = _target_kb(game, "ntulki", actor_id=uid)
+            kb = _with_skip(_target_kb(game, "ntulki", actor_id=uid), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"🦊 Nishon tanlang — uning jamoasiga qarab siz o'zgarasiz ({secs}s):", kb)
 
         elif role == Role.KONCHI:
@@ -1397,51 +1418,51 @@ async def _send_night_actions(bot: Bot, game: Game):
                 InlineKeyboardButton(text=str(n), callback_data=f"nkonchi:{n}:{chat_id}")
                 for n in nums
             ]
-            kb = InlineKeyboardMarkup(inline_keyboard=[buttons[:5], buttons[5:]])
+            kb = _with_skip(InlineKeyboardMarkup(inline_keyboard=[buttons[:5], buttons[5:]]), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"⛏️ *Konchi:* kon qazing! 10 ta raqam ichida 💎 3 olmos, 💣 2 mina, 💵 5 pul slot bor.\n"
                 f"Bir raqam tanlang ({secs}s) — xohlasangiz o'tkazib yuboring:", kb)
 
         elif role == Role.QAROQCHI:
             # Qaroqchi performs exactly ONE action per night.
-            kb = InlineKeyboardMarkup(inline_keyboard=[
+            kb = _with_skip(InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💰 Pul o'g'irlash", callback_data=f"qar_mode:steal:{chat_id}")],
                 [InlineKeyboardButton(text="⚔️ Jon olish", callback_data=f"qar_mode:attack:{chat_id}")],
-            ])
+            ]), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"🏴‍☠️ *Qaroqchi:* Bu kecha faqat *1 ta amal* tanlaysiz.\n\n"
                 f"Amal tanlang ({secs}s):", kb)
 
         elif role == Role.RAIS:
-            kb = _target_kb(game, "nrais", actor_id=uid)
+            kb = _with_skip(_target_kb(game, "nrais", actor_id=uid), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"💰 *Rais:* Bu kecha sovg'a yuborish uchun o'yinchini tanlang.\n"
                 f"50–100$ va 20% ehtimol bilan 1–2 Almas yuboriladi ({secs}s):", kb)
 
         elif role == Role.AYGOQCHI:
-            kb = _mafia_target_kb(game, "naygoychi", actor_id=uid)
+            kb = _with_skip(_mafia_target_kb(game, "naygoychi", actor_id=uid), chat_id)
             # Ayg'oqchi is visible to Mafia team; show LABARANT if labarant_show enabled
             allies = [game.get_display_name(p) for p in alive if p.role in MAFIA_TEAM
                       and (lab_show or p.role != Role.LABARANT) and p.user_id != uid]
             ally_txt = f"\n🤝 Mafiya jamoasi: {', '.join(allies)}" if allies else ""
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*{ally_txt}\n\n"
+                f"*{game.day_number}-kecha*{ally_txt}\n\n"
                 f"🦇 *Ayg'oqchi:* Kimning rolini bilib olmoqchisiz ({secs}s)?", kb)
 
         elif role == Role.KOLDUN:
-            kb = _target_kb(game, "nkoldun", actor_id=uid)
+            kb = _with_skip(_target_kb(game, "nkoldun", actor_id=uid), chat_id)
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n"
+                f"*{game.day_number}-kecha*\n\n"
                 f"🧙 *Koldun:* O'yinchi tanlang:\n"
                 f"🔵 Fuqaro bo'lsa → osilishdan himoyalanadi\n"
                 f"🔴 Mafiya/Mustaqil bo'lsa → kechasi halok bo'ladi ({secs}s):", kb)
 
         elif role in PASSIVE_NIGHT_ROLES:
             await _dm(bot, uid,
-                f"🌙 *{game.day_number}-kecha*\n\n{PASSIVE_MESSAGES.get(role, 'Dam oling.')}")
+                f"*{game.day_number}-kecha*\n\n{PASSIVE_MESSAGES.get(role, 'Dam oling.')}")
 
 
 def _auto_passive(game: Game):
@@ -3143,21 +3164,19 @@ async def cb_newgame_btn(call: CallbackQuery, bot: Bot):
     games[chat_id] = Game(chat_id=chat_id)
     game = games[chat_id]
     user = call.from_user
-    game.add_player(user.id, user.username or "", user.first_name)
+    game.creator_id = user.id
+    game.add_player(user.id, user.username or "", user.first_name, getattr(user, 'last_name', '') or "")
 
     await call.answer("✅ Yangi lobby ochildi!")
     bot_username = await _get_bot_username(bot)
     sent = await bot.send_message(
         chat_id,
-        f"🎮 *RO'YXATDAN O'TISH BOSHLANDI!*\n\n"
-        f"👤 *{escape_md(user.first_name)}* o'yinni yaratdi.\n\n"
-        "Quyidagi tugmani bosib qo'shiling!\n"
-        "Tayyor bo'lganda admin /start bossin.\n\n"
-        f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
-        f"{_player_list(game)}",
+        _lobby_text_html(game),
         reply_markup=_lobby_kb(chat_id, bot_username),
+        parse_mode="HTML",
     )
     game.lobby_msg_id = sent.message_id
+    await _auto_pin(bot, game, sent.message_id)
 
 
 @router.callback_query(F.data.startswith("join:"))
@@ -3316,13 +3335,71 @@ async def cb_nkommode(call: CallbackQuery):
         return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
     game.night_actions["komissar_mode"] = mode
     actor = game.get_player_by_id(call.from_user.id)
-    kb = _komissar_target_kb(game, "nkom", actor_id=actor.user_id if actor else None)
+    target_kb = _komissar_target_kb(game, "nkom", actor_id=actor.user_id if actor else None)
     if mode == "kill":
         text = "🔫 *O'ldirish* uchun o'yinchini tanlang:"
+        kb = target_kb
     else:
         text = "🔍 *Tekshirish* uchun o'yinchini tanlang:"
-    await call.message.edit_text(text, reply_markup=kb)
+        # Add back button only on check mode
+        rows = list(target_kb.inline_keyboard) + [[
+            InlineKeyboardButton(text="🔙 Orqaga", callback_data=f"nkommode_back:{cid}")
+        ]]
+        kb = InlineKeyboardMarkup(inline_keyboard=rows)
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("nkommode_back:"))
+async def cb_nkommode_back(call: CallbackQuery):
+    """Return to komissar mode-selection from player list."""
+    cid = int(call.data.split(":")[1])
+    game = games.get(cid)
+    if not game or game.phase != Phase.NIGHT:
+        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
+    uid = call.from_user.id
+    if uid in game.night_acted_uids:
+        return await call.answer("✅ Allaqachon harakat qildingiz.", show_alert=True)
+    actor = game.get_player_by_id(uid)
+    role = actor.role if actor else None
+    secs = (await get_settings(cid)).night_secs
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔍 Tekshirish", callback_data=f"nkommode:check:{cid}"),
+        InlineKeyboardButton(text="🔫 O'ldirish", callback_data=f"nkommode:kill:{cid}"),
+    ], [
+        InlineKeyboardButton(text="⏭ O'tkazib yuborish", callback_data=f"night_skip:{cid}"),
+    ]])
+    text_role = "🕵🏼" if role == Role.KOMISSAR else "👮🏼"
+    try:
+        await call.message.edit_text(
+            f"{text_role} Bu kecha nima qilasiz ({secs}s)?",
+            reply_markup=kb,
+            parse_mode="Markdown",
+        )
+    except Exception:
+        pass
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("night_skip:"))
+async def cb_night_skip(call: CallbackQuery):
+    """Handle ⏭ O'tkazib yuborish for any night role."""
+    cid = int(call.data.split(":")[1])
+    uid = call.from_user.id
+    game = games.get(cid)
+    if not game or game.phase != Phase.NIGHT:
+        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
+    if uid in game.night_acted_uids:
+        return await call.answer("✅ Allaqachon harakat qildingiz.", show_alert=True)
+    game.night_acted_uids.add(uid)
+    await call.answer("⏭ O'tkazib yubordingiz.", show_alert=False)
+    try:
+        await call.message.edit_text("⏭ *Harakat o'tkazib yuborildi.*", parse_mode="Markdown")
+    except Exception:
+        pass
+    if game.all_night_actions_done():
+        game.cancel_phase_task()
+        _safe_task(_do_night_resolution(call.bot, game))
 
 
 @router.callback_query(F.data.startswith("nkom:"))
