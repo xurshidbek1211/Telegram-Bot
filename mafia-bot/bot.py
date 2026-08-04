@@ -16,23 +16,6 @@ logging.basicConfig(
 logging.getLogger("aiogram").setLevel(logging.WARNING)
 
 
-async def _run_health_server(port: int):
-    from aiohttp import web
-
-    async def health(_request):
-        return web.Response(text="OK")
-
-    app = web.Application()
-    app.router.add_get("/", health)
-    app.router.add_get("/healthz", health)
-
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, host="0.0.0.0", port=port)
-    await site.start()
-    logging.info(f"Health-check server {port}-portda ishga tushdi.")
-
-
 async def main():
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     if not token:
@@ -50,12 +33,6 @@ async def main():
     # would never run.
     dp.include_router(vs_router)
     dp.include_router(router)
-
-    port = os.environ.get("PORT")
-    if port:
-        await _run_health_server(int(port))
-
-    await bot.delete_webhook(drop_pending_updates=True)
 
     await bot.set_my_commands([
         BotCommand(command="game", description="🎮 Ro'yxatdan o'tishni boshlash"),
@@ -77,11 +54,68 @@ async def main():
         BotCommand(command="help", description="❓ Yordam"),
     ])
 
-    logging.info("Mafiya boti ishga tushmoqda...")
-    try:
-        await dp.start_polling(bot)
-    finally:
-        await close_db()
+    port = os.environ.get("PORT")
+    # Render sets RENDER_EXTERNAL_URL; also support a custom WEBHOOK_URL override
+    webhook_base = os.environ.get("WEBHOOK_URL") or os.environ.get("RENDER_EXTERNAL_URL")
+
+    if port and webhook_base:
+        # ── Webhook mode (Render / any hosted env with PORT + public URL) ──
+        from aiohttp import web
+        from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+
+        WEBHOOK_PATH = "/webhook"
+        full_webhook_url = webhook_base.rstrip("/") + WEBHOOK_PATH
+
+        await bot.set_webhook(full_webhook_url, drop_pending_updates=True)
+        logging.info(f"Webhook o'rnatildi: {full_webhook_url}")
+
+        app = web.Application()
+
+        async def health(_request):
+            return web.Response(text="OK")
+
+        app.router.add_get("/", health)
+        app.router.add_get("/healthz", health)
+
+        SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
+        setup_application(app, dp, bot=bot)
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host="0.0.0.0", port=int(port))
+        await site.start()
+        logging.info(f"Webhook server {port}-portda ishga tushdi.")
+
+        try:
+            # Run until cancelled / SIGTERM
+            await asyncio.Event().wait()
+        finally:
+            await bot.delete_webhook()
+            await close_db()
+    else:
+        # ── Polling mode (Replit dev / local) ──
+        if port:
+            # Health check server only (no webhook)
+            from aiohttp import web
+
+            async def health(_request):
+                return web.Response(text="OK")
+
+            health_app = web.Application()
+            health_app.router.add_get("/", health)
+            health_app.router.add_get("/healthz", health)
+            runner = web.AppRunner(health_app)
+            await runner.setup()
+            site = web.TCPSite(runner, host="0.0.0.0", port=int(port))
+            await site.start()
+            logging.info(f"Health-check server {port}-portda ishga tushdi.")
+
+        await bot.delete_webhook(drop_pending_updates=True)
+        logging.info("Mafiya boti polling rejimida ishga tushmoqda...")
+        try:
+            await dp.start_polling(bot)
+        finally:
+            await close_db()
 
 
 if __name__ == "__main__":
