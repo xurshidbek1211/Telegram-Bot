@@ -413,6 +413,17 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
             game.eliminate_player(tid)
             eliminated.append((tp, cause))
 
+    # 14a. Don replacement: if Don was killed this night, promote a random alive Mafia
+    don_just_died = any(p.role == Role.DON for p, _ in eliminated)
+    if don_just_died:
+        alive_mafia = [p for p in game.alive_players() if p.role == Role.MAFIA]
+        if alive_mafia:
+            new_don = random.choice(alive_mafia)
+            new_don.role = Role.DON
+            await _dm(bot, new_don.user_id,
+                "🤵🏻 *Don o'ldirildi!* Siz endi yangi *Don*siz.\n"
+                "Donning barcha vakolatlarini qabul qildingiz.")
+
     afsungar_victims = []
     for uid in afs_counters:
         p = alive.get(uid)
@@ -539,6 +550,9 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
                 for v in game.night_visitors.get(daydi_t, []):
                     if v in game.players and v != daydi.user_id:
                         vp = game.players[v]
+                        # Daydi cannot see Mafia team members
+                        if vp.role in MAFIA_TEAM:
+                            continue
                         vemoji = ROLE_EMOJIS.get(vp.role, "")
                         vrolename = _role_name(vp.role)
                         visitor_parts.append(

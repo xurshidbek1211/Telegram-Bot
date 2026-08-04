@@ -664,21 +664,27 @@ def _format_night_deaths_html(game: "Game", deaths: list) -> str:
         else:
             raw = (d.get("name") or "Noma'lum").replace("*", "").replace("_", "")
             mention = raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        lines = [
-            f"• ☠️ {mention} yo'q qilindi.",
-            f"Roli: {d.get('role_emoji', '')} {d.get('role_name', '')}",
-        ]
-        attackers = d.get("attackers", [])
-        if len(attackers) == 1:
-            em, nm = attackers[0]
-            safe_nm = nm.replace("*", "").replace("_", "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            lines.append(f"Mehmoni: {em} {safe_nm}")
-        elif len(attackers) > 1:
-            lines.append("Mehmonlari:")
-            for em, nm in attackers:
-                safe_nm = nm.replace("*", "").replace("_", "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                lines.append(f"• {em} {safe_nm}")
-        blocks.append("\n".join(lines))
+        role_em = d.get('role_emoji', '')
+        role_nm = d.get('role_name', '').replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        # Gather all night visitors to this player's house (excluding the player themselves)
+        visitor_parts = []
+        for v_uid in game.night_visitors.get(uid, []):
+            if v_uid == uid:
+                continue
+            vp = game.players.get(v_uid)
+            if vp:
+                v_em = ROLE_EMOJIS.get(vp.role, "")
+                v_nm = ROLE_NAMES_UZ.get(vp.role, "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                visitor_parts.append(f"{v_em} {v_nm}")
+        if visitor_parts:
+            visitors_text = ", ".join(visitor_parts)
+        else:
+            visitors_text = "hech kim"
+        block = (
+            f"Tunda {role_em} {mention}\n"
+            f"vaxshiylarcha o'ldirildi. Aytishlaricha, unikiga {visitors_text} kelgan."
+        )
+        blocks.append(block)
     return "Tunda o'ldirilganlar:\n\n" + "\n\n".join(blocks)
 
 
@@ -1136,54 +1142,49 @@ async def _end_game(bot: Bot, game: Game, winner: str):
     if end_msg:
         await _auto_pin(bot, game, end_msg.message_id)
 
-    # Send Geroy / Mission / Sandiq buttons privately to each player
+    # Build end-of-game DM keyboard with all 4 action buttons
     if bot_username_end:
-        dm_rows = [
+        end_dm_rows = [
+            [
+                InlineKeyboardButton(text="🛒 Shop", callback_data="open_shop"),
+                InlineKeyboardButton(text="📦 Sandiq", callback_data=f"open_sandiq:{game.chat_id}"),
+            ],
             [
                 InlineKeyboardButton(text="🦸 Geroy",
                     url=f"https://t.me/{bot_username_end}?start=hero"),
                 InlineKeyboardButton(text="🎯 Mission",
                     url=f"https://t.me/{bot_username_end}?start=missions"),
             ],
-            [InlineKeyboardButton(text="📦 Sandiq", callback_data=f"open_sandiq:{game.chat_id}")],
         ]
     else:
-        dm_rows = [
-            [InlineKeyboardButton(text="📦 Sandiq", callback_data=f"open_sandiq:{game.chat_id}")],
+        end_dm_rows = [
+            [
+                InlineKeyboardButton(text="🛒 Shop", callback_data="open_shop"),
+                InlineKeyboardButton(text="📦 Sandiq", callback_data=f"open_sandiq:{game.chat_id}"),
+            ],
         ]
-    dm_kb = InlineKeyboardMarkup(inline_keyboard=dm_rows)
-    for p in game.players.values():
-        if not p.role:
-            continue
-        try:
-            await bot.send_message(
-                p.user_id,
-                "🎮 O'yin tugadi! Quyidagi imkoniyatlardan foydalaning:",
-                reply_markup=dm_kb,
-            )
-        except Exception:
-            pass
+    end_dm_kb = InlineKeyboardMarkup(inline_keyboard=end_dm_rows)
 
     for p in winners:
         reward = win_rewards.get(p.user_id, WIN_REWARD)
         bonus_note = " (2x kanal bonusi bilan!)" if reward > WIN_REWARD else ""
-        await _dm(bot, p.user_id,
-            f"🎉 Siz {reward}$ yutdingiz!{bonus_note}\n\n"
-            + await _profile_text(p.user_id, p.first_name))
-    for p in losers:
-        await _dm(bot, p.user_id,
-            "😔 Siz yutqazdingiz.\n\n" + await _profile_text(p.user_id, p.first_name))
-
-    # Send Shop button DM to every participant after game ends
-    _shop_after_game_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🛒 Shop", callback_data="open_shop")]
-    ])
-    for p in game.players.values():
         try:
             await bot.send_message(
                 p.user_id,
-                "🛒 O'yin tugadi! Do'konga tashrif buyurib yangi itemlar sotib oling:",
-                reply_markup=_shop_after_game_kb,
+                f"🎉 Siz {reward}$ yutdingiz!{bonus_note}\n\n"
+                + await _profile_text(p.user_id, p.first_name),
+                parse_mode="Markdown",
+                reply_markup=end_dm_kb,
+            )
+        except Exception:
+            pass
+    for p in losers:
+        try:
+            await bot.send_message(
+                p.user_id,
+                "😔 Siz yutqazdingiz.\n\n" + await _profile_text(p.user_id, p.first_name),
+                parse_mode="Markdown",
+                reply_markup=end_dm_kb,
             )
         except Exception:
             pass
@@ -3291,7 +3292,7 @@ async def cb_nk(call: CallbackQuery):
 
     # If Don voted — send atmosphere message to group
     if is_don:
-        await _atmosphere(call.bot, game.chat_id, "🤵 Don qorong'ulikda nishonni belgiladi...")
+        await _atmosphere(call.bot, game.chat_id, "🤵🏻 Don o'ljasini tanladi.")
 
     # DM all visible Mafia members about the vote
     await _notify_mafia_of_vote(
@@ -3309,7 +3310,7 @@ async def cb_nk(call: CallbackQuery):
 async def cb_nyq(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     await _night_cb(call, Role.YOLLANMA_QOTIL, int(tid), int(cid), "🥷 Nishon tanlandi",
-                    "🥷 Yollanma qotil qorong'ulikda ov boshladi...")
+                    "🥷 Yollanma qotil tungi ovga ketdi!")
 
 
 @router.callback_query(F.data.startswith("nadv:"))
@@ -3412,54 +3413,60 @@ async def cb_nkom(call: CallbackQuery):
     mode = game.night_actions.get("komissar_mode", "check")
     confirm = "🔫 Nishon tanlandi" if mode == "kill" else "🕵🏼 Tekshirilmoqda"
     if mode == "kill":
-        atm = "🔫 Komissar pistoletini o'qladi..."
+        atm = "🕵🏼 Komissar katani pistoletini o'qladi!"
     elif key == Role.SERZHANT:
-        atm = "👮🏼 Serjant tungi tekshiruvga yo'l oldi..."
+        atm = "🕵🏼 Komissar katani yovuzlarni qidirishga ketdi!"
     else:
-        atm = "🕵🏼 Komissar tungi tekshiruvga yo'l oldi..."
+        atm = "🕵🏼 Komissar katani yovuzlarni qidirishga ketdi!"
     await _night_cb(call, key, int(tid), int(cid), confirm, atm)
 
 
 @router.callback_query(F.data.startswith("nlab:"))
 async def cb_nlab(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.LABARANT, int(tid), int(cid), "🧪 Nishon tanlandi",
-                    "🧪 Labarant maxsus eritmasini tayyorlamoqda...")
+    tid, cid = int(tid), int(cid)
+    game = games.get(cid)
+    target = game.get_player_by_id(tid) if game else None
+    if target and target.role in MAFIA_TEAM:
+        atm = "👩‍⚕️ Labarant davolovchi eleksirni ishga soldi!"
+    else:
+        atm = "👩‍⚕️ Labarant o'lim eleksirini ishga soldi!"
+    await _night_cb(call, Role.LABARANT, tid, cid, "🧪 Nishon tanlandi", atm)
 
 
 @router.callback_query(F.data.startswith("ndoc:"))
 async def cb_ndoc(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     await _night_cb(call, Role.DOCTOR, int(tid), int(cid), "💊 Himoyaga olindi",
-                    "👨🏼‍⚕️ Doktor kimnidir qutqarish uchun shoshildi...")
+                    "👨🏼‍⚕️ Doktor tungi navbatchilikka ketdi!")
 
 
 @router.callback_query(F.data.startswith("nkez:"))
 async def cb_nkez(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     await _night_cb(call, Role.KEZUVCHI, int(tid), int(cid), "💃 Uyqu dori berildi",
-                    "💃 Kezuvchi uyqu dorisini tayyorlamoqda...")
+                    "💃 Kezuvchi kimnikigadir mehmonga ketdi!")
 
 
 @router.callback_query(F.data.startswith("nday:"))
 async def cb_nday(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     await _night_cb(call, Role.DAYDI, int(tid), int(cid), "🧙‍♂️ Tashrif manzili tanlandi",
-                    "🧙‍♂️ Daydi shahar bo'ylab kuzatuv boshladi...")
+                    "🧙‍♂️ Daydi kimnikigadir shisha olish uchun ketdi!")
 
 
 @router.callback_query(F.data.startswith("nqot:"))
 async def cb_nqot(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     await _night_cb(call, Role.QOTIL, int(tid), int(cid), "🔪 Nishon tanlandi",
-                    "🔪 Qotil navbatdagi qurbonini izlamoqda...")
+                    "🔪 Qotil Butalar orasiga yashirinib oldi va pichoqni qinidan chiqardi...")
 
 
 @router.callback_query(F.data.startswith("ntulki:"))
 async def cb_ntulki(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     await _night_cb(call, Role.TULKI, int(tid), int(cid), "🦊 Nishon tanlandi",
-                    "🦊 Tulki yangi qiyofasini izlamoqda...")
+                    "🦊 Tulki o'z tomonini tanladi.")
 
 
 @router.callback_query(F.data.startswith("nkimmode:"))
@@ -3485,7 +3492,7 @@ async def cb_nkim(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     mode = games.get(int(cid), Game(0)).night_actions.get("kimyogar_mode", "heal")
     label = "davolash" if mode == "heal" else "o'ldirish"
-    atm = "🧪 Kimyogar davolash eliksirini tayyorlamoqda..." if mode == "heal" else "☠️ Kimyogar zahar tayyorlamoqda..."
+    atm = "👨‍🔬 Kimyogar davolovchi eleksirini ishga soldi!" if mode == "heal" else "👨‍🔬 Kimyogar o'ldiruvchi eleksirini ishga soldi!"
     await _night_cb(call, Role.KIMYOGAR, int(tid), int(cid), f"👨‍🔬 {label} tanlandi", atm)
 
 
@@ -3493,7 +3500,7 @@ async def cb_nkim(call: CallbackQuery):
 async def cb_nmin(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     await _night_cb(call, Role.MINIOR, int(tid), int(cid), "☠️ Mina qo'yildi",
-                    "☠️ Minyor qorong'ulikdan foydalanib mina o'rnatmoqda...")
+                    "☠️ Minior minasini joylashtirdi!")
 
 
 @router.callback_query(F.data.startswith("nafer:"))
@@ -3573,6 +3580,7 @@ async def cb_joktarget(call: CallbackQuery):
         f"Kartalar ovoz berish bosqachasida yuboriladi."
     )
     await call.answer("🤡 Maqsad tanlandi.")
+    await _atmosphere(call.bot, game.chat_id, "🤡 Joker hursandchilik qilishga ketdi!")
     if game.all_night_actions_done():
         _safe_task(_do_night_resolution(call.bot, game))
 
@@ -3911,14 +3919,20 @@ async def cb_nrais(call: CallbackQuery):
 async def cb_naygoychi(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     await _night_cb(call, Role.AYGOQCHI, int(tid), int(cid), "🦇 Nishon tanlandi",
-                    "🦇 Ayg'oqchi qorong'ulikda ov boshladi...")
+                    "🦇 Ayg'oqchi o'z harakatini boshladi.")
 
 
 @router.callback_query(F.data.startswith("nkoldun:"))
 async def cb_nkoldun(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
-    await _night_cb(call, Role.KOLDUN, int(tid), int(cid), "🧙 Nishon tanlandi",
-                    "🧙 Koldun sehri bilan harakat qilmoqda...")
+    tid, cid = int(tid), int(cid)
+    game = games.get(cid)
+    target = game.get_player_by_id(tid) if game else None
+    if target and target.role in CITIZEN_TEAM:
+        atm = "⚡️ Koldun kimnidir osishdan himoya qilmoqchi!"
+    else:
+        atm = "⚡️ Koldun o'z sehrini ishga soldi!"
+    await _night_cb(call, Role.KOLDUN, tid, cid, "🧙 Nishon tanlandi", atm)
 
 
 @router.callback_query(F.data.startswith("qar_mode:"))
@@ -3975,7 +3989,7 @@ async def cb_qar_t(call: CallbackQuery):
         f"Bu kecha boshqa amal tanlay olmaysiz. Natija ertalab ma'lum bo'ladi."
     )
     await call.answer("✅ Amal tanlandi!")
-    atm = "🏴‍☠️ Qaroqchi kimnidir tunamoqda..." if mode == "steal" else "🥊 Qaroqchi kimnidir kaltaklamoqda..."
+    atm = "⚔️ Qaroqchi kimdandir 💵 oldi." if mode == "steal" else "⚔️ Qaroqchi kimdandir 💵 oldi."
     await _atmosphere(call.bot, cid, atm)
     if game.all_night_actions_done():
         _safe_task(_do_night_resolution(call.bot, game))
@@ -4891,10 +4905,13 @@ async def _handle_last_words(msg: Message, bot: Bot):
         game.pending_last_words.discard(uid)
         player = game.get_player_by_id(uid)
         name = player.display_name if player else (msg.from_user.first_name or "Noma'lum")
+        safe_name = (name or "Noma'lum").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        mention = f'<a href="tg://user?id={uid}">{safe_name}</a>'
+        safe_text = (msg.text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         await bot.send_message(
             game.chat_id,
-            f"🕊 *So'nggi so'z*\n\n☠️ {name}:\n\n{msg.text}",
-            parse_mode="Markdown",
+            f"O'limidan oldin kimdir {mention}ning qichqirganini eshitdi...\n\n{safe_text}",
+            parse_mode="HTML",
         )
         await msg.answer("✅ So'nggi so'zingiz guruhga yuborildi.")
         return
