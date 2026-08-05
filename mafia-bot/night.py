@@ -405,6 +405,12 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
             bori_transform = "serzhant"
             pending.pop(bori.user_id)
 
+    # 13b. Admiral immunity — indestructible while Komissar Katani is alive
+    admiral_p = game.get_alive_by_role(Role.ADMIRAL)
+    if admiral_p and admiral_p.user_id in pending:
+        if game.get_alive_by_role(Role.KOMISSAR):
+            pending.pop(admiral_p.user_id)
+
     # 14. Apply kills
     eliminated = []
     for tid, cause in pending.items():

@@ -4547,7 +4547,10 @@ async def cb_hero_attack_kb(call: CallbackQuery):
     if not hero or hero.charges <= 0:
         return await call.answer("❌ Zaryad yo'q! Zaryadlash uchun /hero.", show_alert=True)
 
-    targets = [p for p in game.alive_players() if p.user_id != uid]
+    targets = [
+        p for p in game.alive_players()
+        if p.user_id != uid and p.role != Role.KOMISSAR
+    ]
     if not targets:
         return await call.answer("❌ Nishon yo'q.", show_alert=True)
 
@@ -4609,6 +4612,10 @@ async def cb_hero_attack(call: CallbackQuery, bot: Bot):
     target = game.get_player_by_id(target_uid)
     if not target or not target.alive:
         return await call.answer("❌ Nishon allaqachon hayotda emas.", show_alert=True)
+
+    # Geroy cannot attack Komissar Katani
+    if target.role == Role.KOMISSAR:
+        return await call.answer("❌ Geroy Komissar Kataniga hujum qila olmaydi!", show_alert=True)
 
     await call.answer()
 
