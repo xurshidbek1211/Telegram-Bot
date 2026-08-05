@@ -240,6 +240,8 @@ class Game:
     hero_used_today: set = field(default_factory=set)
     # Kezuvchi: UID restricted from writing until next night
     kezuvchi_restricted_uid: Optional[int] = None
+    # Hang confirmation: UID of the player being voted on (cannot vote themselves)
+    hang_nominated_uid: Optional[int] = None
     # Auto-pin: message_id of currently pinned message
     pinned_msg_id: Optional[int] = None
 

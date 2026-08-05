@@ -859,7 +859,7 @@ async def run_vote(bot: Bot, chat_id: int):
 
     vote_url = f"https://t.me/{bot_username}" if bot_username else None
     vote_inline_kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="🗳️ Ovoz berish", url=vote_url)
+        InlineKeyboardButton(text="Ovoz berish", url=vote_url)
     ]]) if vote_url else None
     vote_msg = await _safe_send(
         bot, chat_id,
@@ -878,7 +878,7 @@ async def run_vote(bot: Bot, chat_id: int):
         try:
             await bot.send_message(
                 p.user_id,
-                "🗳️ *Ovoz berish vaqti!*\n\nKim Mafiya ekanini o'ylab, tanlang:",
+                "Ovoz berish vaqti!",
                 reply_markup=_vote_kb(game, p.user_id),
             )
         except Exception:
@@ -893,8 +893,8 @@ async def run_vote(bot: Bot, chat_id: int):
 
 def _like_dislike_kb(likes: int = 0, dislikes: int = 0) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text=f"👍 Ha ({likes})", callback_data="hangvote:like"),
-        InlineKeyboardButton(text=f"👎 Yo'q ({dislikes})", callback_data="hangvote:dislike"),
+        InlineKeyboardButton(text=f"👍 ({likes})", callback_data="hangvote:like"),
+        InlineKeyboardButton(text=f"👎 ({dislikes})", callback_data="hangvote:dislike"),
     ]])
 
 
@@ -902,6 +902,7 @@ async def _run_hang_confirmation(bot: Bot, game: Game, eliminated, summary: str)
     settings = await get_settings(game.chat_id)
     secs = settings.hang_confirm_secs
     game.hang_confirm_votes = {}
+    game.hang_nominated_uid = eliminated.user_id
 
     el_mention = _player_mention_html(game, eliminated)
 
@@ -921,13 +922,20 @@ async def _run_hang_confirmation(bot: Bot, game: Game, eliminated, summary: str)
     dislikes = sum(1 for v in game.hang_confirm_votes.values() if v == "dislike")
     confirmed = likes > dislikes
 
-    result_text = (
-        f"Ovoz berish natijalari:\n\n"
-        f"👍 {likes} | 👎 {dislikes}\n\n"
-        + (f"{el_mention} kunduzgi yig'ilishda osiladi!"
-           if confirmed else
-           f"🕊️ Ko'pchilik rozi emas — {el_mention} tirik qoladi!")
-    )
+    if likes == dislikes:
+        result_text = f"Aholi kelisha olmadi ({likes} 👍 | {dislikes} 👎)...\n\nKelisha olmagani uchun hech kim osilmadi."
+    elif confirmed:
+        result_text = (
+            f"Ovoz berish natijalari:\n\n"
+            f"👍 {likes} | 👎 {dislikes}\n\n"
+            f"{el_mention} kunduzgi yig'ilishda osiladi!"
+        )
+    else:
+        result_text = (
+            f"Ovoz berish natijalari:\n\n"
+            f"👍 {likes} | 👎 {dislikes}\n\n"
+            f"🕊️ Ko'pchilik rozi emas — {el_mention} tirik qoladi!"
+        )
 
     edited = None
     if confirm_msg:
@@ -940,6 +948,7 @@ async def _run_hang_confirmation(bot: Bot, game: Game, eliminated, summary: str)
 
     game.hang_confirm_votes = {}
     game.hang_confirm_msg_id = None
+    game.hang_nominated_uid = None
     return confirmed
 
 
@@ -971,8 +980,7 @@ async def _do_vote_resolution(bot: Bot, game: Game):
     if eliminated_id is None:
         await bot.send_message(
             game.chat_id,
-            "Ovoz berish natijalari:\n\n"
-            "⚖️ Tenglashdi! Bugun hech kim chiqarilmadi.\n\nKecha tushdi...",
+            "Aholi kelisha olmadi...\n\nKelisha olmagani uchun hech kim osilmadi.",
         )
         game.day_number += 1
         await run_night(bot, game.chat_id)
@@ -1693,7 +1701,7 @@ async def cmd_players(msg: Message):
 
 
 @router.message(Command("leave"))
-async def cmd_leave(msg: Message):
+async def cmd_leave(msg: Message, bot: Bot):
     if msg.chat.type == "private":
         return await msg.answer("⚠️ Bu buyruq faqat guruh chatlarda ishlaydi.")
 
@@ -1705,20 +1713,67 @@ async def cmd_leave(msg: Message):
     game = games.get(chat_id)
     if not game or game.phase == Phase.ENDED:
         return await msg.answer("⚠️ Bu chatda faol lobby yo'q.")
-    if game.phase != Phase.LOBBY:
-        return await msg.answer("⚠️ O'yin boshlangandan keyin chiqib bo'lmaydi.")
 
     user = msg.from_user
-    if user.id not in game.players:
-        return await msg.answer("⚠️ Siz lobbyda emassiz.")
 
-    game.remove_player(user.id)
-    await msg.answer(
-        f"👋 *{escape_md(user.first_name)}* lobbydan chiqdi.\n\n"
-        f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
-        f"{_player_list(game)}",
-        reply_markup=_lobby_kb(chat_id),
+    if game.phase == Phase.LOBBY:
+        if user.id not in game.players:
+            return await msg.answer("⚠️ Siz lobbyda emassiz.")
+        game.remove_player(user.id)
+        await msg.answer(
+            f"👋 *{escape_md(user.first_name)}* lobbydan chiqdi.\n\n"
+            f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
+            f"{_player_list(game)}",
+            reply_markup=_lobby_kb(chat_id),
+        )
+        return
+
+    # ── Game in progress ──
+    player = game.get_player_by_id(user.id)
+    if not player or not player.alive:
+        return await msg.answer("⚠️ Siz bu o'yinning faol o'yinchisi emassiz.")
+
+    role = player.role
+    role_emoji = ROLE_EMOJIS.get(role, "")
+    role_name = ROLE_NAMES_UZ.get(role, "")
+
+    game.eliminate_player(user.id)
+
+    safe_name = (user.first_name or "Noma'lum").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    mention = f'<a href="tg://user?id={user.id}">{safe_name}</a>'
+    await bot.send_message(
+        chat_id,
+        f"😔 {mention} bu shaharning yovuzliklariga chiday olmadi va o'zini osib qo'ydi. "
+        f"U {role_emoji} {role_name} edi.",
+        parse_mode="HTML",
     )
+
+    # Don replacement: if leaver was Don, promote random alive Mafia
+    if role == Role.DON:
+        alive_mafia = [p for p in game.alive_players() if p.role == Role.MAFIA]
+        if alive_mafia:
+            new_don = random.choice(alive_mafia)
+            new_don.role = Role.DON
+            try:
+                await bot.send_message(
+                    new_don.user_id,
+                    "🤵🏻 *Don o'yindan chiqdi!* Siz endi yangi *Don*siz.\n"
+                    "Donning barcha vakolatlarini qabul qildingiz.",
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                pass
+
+    winner = game.check_win_condition()
+    if winner:
+        _safe_task(_end_game(bot, game, winner))
+        return
+
+    # If during night phase, mark player as acted so the night can resolve
+    if game.phase == Phase.NIGHT:
+        game.night_acted_uids.add(user.id)
+        if game.all_night_actions_done():
+            _safe_task(_do_night_resolution(bot, game))
 
 
 # ── /utag — Guruh a'zolarini chaqirish ──
@@ -3242,9 +3297,9 @@ async def _night_cb(call: CallbackQuery, action_key, target_id: int, chat_id: in
 async def _notify_mafia_of_vote(bot: Bot, game: Game, voter_name: str, target_name: str, is_don: bool):
     """Send vote notification DM to all visible Mafia members."""
     if is_don:
-        text = f"🤵 Don → *{target_name}*ni tanladi."
+        text = f"🤵 Don *{target_name}*ni tanladi."
     else:
-        text = f"🤵 {voter_name} → *{target_name}*ga ovoz berdi."
+        text = f"🤵 {voter_name} *{target_name}*ga ovoz berdi."
     for p in game.alive_players():
         if p.role in (Role.DON, Role.MAFIA, Role.YOLLANMA_QOTIL,
                       Role.ADVOKAT, Role.JURNALIST, Role.AYGOQCHI):
@@ -3398,6 +3453,12 @@ async def cb_night_skip(call: CallbackQuery):
         await call.message.edit_text("⏭ *Harakat o'tkazib yuborildi.*", parse_mode="Markdown")
     except Exception:
         pass
+    # Send atmosphere message for skipped role
+    player = game.get_player_by_id(uid)
+    if player and player.role:
+        role_em = ROLE_EMOJIS.get(player.role, "")
+        role_nm = ROLE_NAMES_UZ.get(player.role, "")
+        await _atmosphere(call.bot, cid, f"🚷 {role_em} {role_nm} bugun dam oladi!")
     if game.all_night_actions_done():
         game.cancel_phase_task()
         _safe_task(_do_night_resolution(call.bot, game))
@@ -3755,10 +3816,18 @@ async def cb_hangvote(call: CallbackQuery):
     if not voter or not voter.alive:
         return await call.answer("⚠️ Siz faol o'yinchi emassiz.", show_alert=True)
 
+    # Nominated (osilayotgan) player cannot vote
+    if game.hang_nominated_uid and voter.user_id == game.hang_nominated_uid:
+        return await call.answer("⚠️ Siz nomzod sifatida ovoz bera olmaysiz.", show_alert=True)
+
+    # Kezuvchi-blocked player cannot vote
+    if game.kezuvchi_restricted_uid and voter.user_id == game.kezuvchi_restricted_uid:
+        return await call.answer("⚠️ Siz uxlatilgansiz — ovoz bera olmaysiz.", show_alert=True)
+
     game.hang_confirm_votes[voter.user_id] = choice
     likes = sum(1 for v in game.hang_confirm_votes.values() if v == "like")
     dislikes = sum(1 for v in game.hang_confirm_votes.values() if v == "dislike")
-    _vote_label = "👍 Ha" if choice == "like" else "👎 Yo'q"
+    _vote_label = "👍" if choice == "like" else "👎"
     await call.answer(f"✅ {_vote_label} bosdingiz")
     try:
         await call.message.edit_reply_markup(
@@ -3792,7 +3861,7 @@ async def cb_dvote(call: CallbackQuery, bot: Bot):
 
     try:
         await call.message.edit_text(
-            f"🗳️ *Ovoz qabul qilindi!*\n\n✅ Siz *{game.get_display_name(target)}*ga ovoz berdingiz."
+            f"*Ovoz qabul qilindi!*\n\n✅ Siz *{game.get_display_name(target)}*ga ovoz berdingiz."
         )
     except Exception:
         pass
@@ -3802,22 +3871,17 @@ async def cb_dvote(call: CallbackQuery, bot: Bot):
         target_m = _player_mention_html(game, target)
         await _safe_send(
             bot, cid,
-            f"🗳️ {voter_m} — {target_m}ga ovoz berdi.",
+            f"{voter_m} — {target_m}ga ovoz berdi.",
             parse_mode="HTML",
         )
     except Exception:
         pass
 
     if game.vote_msg_id:
-        voted = len(game.votes)
-        alive = len(game.alive_players())
         try:
             await bot.edit_message_text(
                 chat_id=cid, message_id=game.vote_msg_id,
-                text=(
-                    f"🗳️ *OVOZ BERISH BOSHLANDI!*\n\n"
-                    f"{voted}/{alive} ovoz berdi."
-                ),
+                text="OVOZ BERISH BOSHLANDI!",
             )
         except Exception:
             pass
@@ -3985,7 +4049,7 @@ async def cb_qar_t(call: CallbackQuery):
     label = "💰 Pul o'g'irlash" if mode == "steal" else "⚔️ Jon olish"
     await call.message.edit_text(
         f"✅ *Qaroqchi amali tanlandi!*\n\n"
-        f"*{label}* → *{game.get_display_name(target)}*\n\n"
+        f"*{label}*: *{game.get_display_name(target)}*\n\n"
         f"Bu kecha boshqa amal tanlay olmaysiz. Natija ertalab ma'lum bo'ladi."
     )
     await call.answer("✅ Amal tanlandi!")
