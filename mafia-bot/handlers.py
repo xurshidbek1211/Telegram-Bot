@@ -113,6 +113,8 @@ def _player_mention_html(game: "Game", p) -> str:
             name = f"🔴 {name}"
         elif p.user_id in game.vs_blue_team:
             name = f"🔵 {name}"
+    if p.role == Role.KONCHI:
+        name = f"⛏️ {name}"
     safe = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return f'<a href="tg://user?id={p.user_id}">{safe}</a>'
 

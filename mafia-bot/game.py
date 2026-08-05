@@ -304,6 +304,8 @@ class Game:
                 return f"🔴 {name}"
             if player.user_id in self.vs_blue_team:
                 return f"🔵 {name}"
+        if player.role == Role.KONCHI:
+            return f"⛏️ {name}"
         return name
 
     def required_night_actors(self) -> set:
