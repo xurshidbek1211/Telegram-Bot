@@ -698,20 +698,20 @@ def _alive_status_html(game: "Game") -> str:
     tinchlar = [p for p in alive if p.role and p.role in CITIZEN_TEAM]
     mafiyalar = [p for p in alive if p.role and p.role in MAFIA_TEAM]
     yakkalar = [p for p in alive if p.role and p.role not in MAFIA_TEAM and p.role not in CITIZEN_TEAM]
-    tinch_roles = "\n".join(
+    tinch_roles = ", ".join(
         f"{ROLE_EMOJIS.get(p.role, '')} {ROLE_NAMES_UZ.get(p.role, '')}" for p in tinchlar
     ) or "—"
-    mafia_roles_txt = "\n".join(
+    mafia_roles_txt = ", ".join(
         f"{ROLE_EMOJIS.get(p.role, '')} {ROLE_NAMES_UZ.get(p.role, '')}" for p in mafiyalar
     ) or "—"
-    yakka_roles = "\n".join(
+    yakka_roles = ", ".join(
         f"{ROLE_EMOJIS.get(p.role, '')} {ROLE_NAMES_UZ.get(p.role, '')}" for p in yakkalar
     ) or "—"
     return (
         f"Tirik o'yinchilar:\n\n{alive_list}\n\n"
-        f"Tinchlar - {len(tinchlar)}:\n{tinch_roles}\n\n"
-        f"Mafiyalar - {len(mafiyalar)}:\n{mafia_roles_txt}\n\n"
-        f"Yakkalar - {len(yakkalar)}:\n{yakka_roles}\n\n"
+        f"Tinchlar - {len(tinchlar)}:\n\n{tinch_roles}\n\n"
+        f"Mafiyalar - {len(mafiyalar)}:\n\n{mafia_roles_txt}\n\n"
+        f"Yakkalar - {len(yakkalar)}:\n\n{yakka_roles}\n\n"
         f"Jami: {len(alive)} ta\n\n"
         f"Endi kechaning natijalarini muhokama qilamiz..."
     )
