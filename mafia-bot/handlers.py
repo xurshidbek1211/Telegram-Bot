@@ -690,6 +690,19 @@ def _format_night_deaths_html(game: "Game", deaths: list) -> str:
     return "Tunda o'ldirilganlar:\n\n" + "\n\n".join(blocks)
 
 
+def _format_mine_victims_html(game: "Game", mine_victims: list) -> str:
+    """HTML block for players killed by Minyor mine."""
+    if not mine_victims:
+        return ""
+    lines = []
+    for vp in mine_victims:
+        em = ROLE_EMOJIS.get(vp.role, "")
+        rn = ROLE_NAMES_UZ.get(vp.role, "")
+        mention = f'<a href="tg://user?id={vp.user_id}">{vp.first_name}</a>'
+        lines.append(f"{em} {rn} {mention} — minaga tushdi!")
+    return "💣 Minaga tushganlar:\n\n" + "\n".join(lines)
+
+
 def _alive_status_html(game: "Game") -> str:
     """HTML alive players block with clickable mentions and team role counts."""
     alive = game.alive_players()
@@ -737,7 +750,7 @@ async def _do_night_resolution(bot: Bot, game: Game):
     if game.phase != Phase.NIGHT:
         return
     settings = await get_settings(game.chat_id)
-    deaths, events = await resolve_night(game, bot)
+    deaths, events, mine_victims = await resolve_night(game, bot)
 
     # ── AFK check ──
     required = game.night_required_snapshot
@@ -785,6 +798,8 @@ async def _do_night_resolution(bot: Bot, game: Game):
         if extra_html:
             deaths_text += f"\n\n{extra_html}"
         await _safe_send(bot, game.chat_id, deaths_text, parse_mode="HTML")
+        if mine_victims:
+            await _safe_send(bot, game.chat_id, _format_mine_victims_html(game, mine_victims), parse_mode="HTML")
         await _end_game(bot, game, winner)
         return
 
@@ -804,6 +819,10 @@ async def _do_night_resolution(bot: Bot, game: Game):
     if extra_html:
         deaths_text += f"\n\n{extra_html}"
     await _safe_send(bot, game.chat_id, deaths_text, parse_mode="HTML")
+
+    # ── Mine victims block ──
+    if mine_victims:
+        await _safe_send(bot, game.chat_id, _format_mine_victims_html(game, mine_victims), parse_mode="HTML")
 
     # ── Message 3: Alive players with HTML mentions ──
     await _safe_send(bot, game.chat_id, _alive_status_html(game), parse_mode="HTML")
@@ -1105,6 +1124,11 @@ async def _end_game(bot: Bot, game: Game, winner: str):
         winner_ids = {q.user_id} if q else set()
     else:
         winner_ids = {p.user_id for p in game.players.values() if p.alive and p.role not in MAFIA_TEAM and p.role != Role.QOTIL}
+
+    # Konchi: always wins if alive at game end (independent of other teams)
+    konchi_p = game.get_alive_by_role(Role.KONCHI)
+    if konchi_p:
+        winner_ids.add(konchi_p.user_id)
 
     winners = [p for p in game.players.values() if p.role and p.user_id in winner_ids]
     losers = [p for p in game.players.values() if p.role and p.user_id not in winner_ids]
@@ -1467,9 +1491,7 @@ async def _send_night_actions(bot: Bot, game: Game):
             kb = _with_skip(_target_kb(game, "nkoldun", actor_id=uid), chat_id)
             await _dm(bot, uid,
                 f"*{game.day_number}-kecha*\n\n"
-                f"🧙 *Koldun:* O'yinchi tanlang:\n"
-                f"🔵 Fuqaro bo'lsa → osilishdan himoyalanadi\n"
-                f"🔴 Mafiya/Mustaqil bo'lsa → kechasi halok bo'ladi ({secs}s):", kb)
+                f"⚡ *Koldun:* O'yinchi tanlang", kb)
 
         elif role in PASSIVE_NIGHT_ROLES:
             await _dm(bot, uid,
@@ -2746,7 +2768,9 @@ async def cmd_give(msg: Message):
         if not await transfer_diamond(giver.id, target.id, amount):
             return await msg.answer("❌ Yetarli olmos yo'q.")
         return await msg.answer(
-            f"💎 *{escape_md(giver.first_name)}* → *{escape_md(target.first_name)}*ga *{amount}* olmos o'tkazdi!"
+            f'💎 <a href="tg://user?id={giver.id}">{giver.first_name}</a> '
+            f'<a href="tg://user?id={target.id}">{target.first_name}</a>ga {amount} olmos o\'tkazdi!',
+            parse_mode="HTML",
         )
 
     giver_p = await get_profile(giver.id, giver.first_name)
@@ -2829,7 +2853,9 @@ async def cmd_money(msg: Message):
         if not await transfer_dollar(giver.id, target.id, amount):
             return await msg.answer("❌ Yetarli pul yo'q.")
         return await msg.answer(
-            f"💵 *{escape_md(giver.first_name)}* → *{escape_md(target.first_name)}*ga *{amount}$* o'tkazdi!"
+            f'💵 <a href="tg://user?id={giver.id}">{giver.first_name}</a> '
+            f'<a href="tg://user?id={target.id}">{target.first_name}</a>ga {amount}$ o\'tkazdi!',
+            parse_mode="HTML",
         )
 
     giver_p = await get_profile(giver.id, giver.first_name)
@@ -3998,7 +4024,7 @@ async def cb_nkoldun(call: CallbackQuery):
         atm = "⚡️ Koldun kimnidir osishdan himoya qilmoqchi!"
     else:
         atm = "⚡️ Koldun o'z sehrini ishga soldi!"
-    await _night_cb(call, Role.KOLDUN, tid, cid, "🧙 Nishon tanlandi", atm)
+    await _night_cb(call, Role.KOLDUN, tid, cid, "⚡ Nishon tanlandi", atm)
 
 
 @router.callback_query(F.data.startswith("qar_mode:"))
@@ -4085,7 +4111,7 @@ async def auto_delete_handler(msg: Message, bot: Bot):
 
     # Kezuvchi-blocked player: delete silently, no warning
     if game and msg.from_user and game.kezuvchi_restricted_uid == msg.from_user.id:
-        if game.phase in (Phase.DAY, Phase.VOTING):
+        if game.phase in (Phase.DAY, Phase.VOTING, Phase.NIGHT):
             try:
                 await bot.delete_message(chat_id, msg.message_id)
             except Exception:

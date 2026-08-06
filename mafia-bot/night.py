@@ -411,6 +411,10 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
         if game.get_alive_by_role(Role.KOMISSAR):
             pending.pop(admiral_p.user_id)
 
+    # 13c. Minyor protection — mined target survives all attacks this night
+    for mined_id in game.mines_set:
+        pending.pop(mined_id, None)
+
     # 14. Apply kills
     eliminated = []
     for tid, cause in pending.items():
@@ -670,7 +674,7 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
     if gazabkor_suicide:
         _add_death(gazabkor_suicide, attacker_roles=[])
 
-    return deaths, events
+    return deaths, events, mine_victims
 
 
 def _uid(game: Game, role: Role) -> Optional[int]:
