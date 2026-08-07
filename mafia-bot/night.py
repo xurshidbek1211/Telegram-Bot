@@ -584,14 +584,25 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
     jurn = game.get_alive_by_role(Role.JURNALIST)
     jurn_t = actions.get(Role.JURNALIST)
     if jurn and jurn_t and not blocked(jurn.user_id):
-        visitors = [game.get_display_name(game.players[v]) for v in game.night_visitors.get(jurn_t, [])
-                    if v in game.players and v != jurn.user_id]
         tp = game.players.get(jurn_t)
         if tp:
+            # Journalist only sees civilian and independent visitors.
+            # Mafia-team visitors are intentionally omitted completely:
+            # neither their name nor their role may leak through the report.
+            visible_visitors = [
+                game.players[v] for v in game.night_visitors.get(jurn_t, [])
+                if v in game.players
+                and v != jurn.user_id
+                and game.players[v].role not in MAFIA_TEAM
+            ]
+            visitors = [
+                f"{game.get_display_name(visitor)} — "
+                f"{ROLE_EMOJIS.get(visitor.role, '')} {_role_name(visitor.role)}"
+                for visitor in visible_visitors
+            ]
             msg = (f"👩🏼‍💻 *Intervyu ({game.get_display_name(tp)} uyi):* kelganlar: {', '.join(visitors)}"
                    if visitors else f"👩🏼‍💻 *{game.get_display_name(tp)}* uyiga bu kecha hech kim kelmadi.")
-            for mp in game.alive_mafia_team():
-                await _dm(bot, mp.user_id, msg)
+            await _dm(bot, jurn.user_id, msg)
 
     # 24. Sotqin expose
     sotqin = game.get_alive_by_role(Role.SOTQIN)
