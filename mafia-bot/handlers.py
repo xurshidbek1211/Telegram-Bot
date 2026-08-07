@@ -2634,27 +2634,43 @@ async def _promo_text() -> str:
     channel = await get_promo_channel()
     if not channel:
         return ""
+
     link = channel if channel.startswith("http") or channel.startswith("@") else f"@{channel}"
-    return f"\n\n📢 *{escape_md(link)}* kanaliga a'zo bo'ling va mukofotlaringiz *2x* bo'lsin!"
+
+    return (
+        f"\n\n📢 {link} kanaliga a'zo bo'ling va mukofotlaringiz 2x bo'lsin!"
+    )
 
 
 @router.message(Command("kanal"))
 async def cmd_kanal(msg: Message):
     if msg.from_user.id != OWNER_ID:
-        return await msg.answer("⚠️ Bu buyruqni faqat bot egasi ishlatishi mumkin.")
+        return await msg.answer(
+            "⚠️ Bu buyruqni faqat bot egasi ishlatishi mumkin.",
+            parse_mode=None
+        )
 
     parts = msg.text.split(maxsplit=1)
     if len(parts) < 2 or not parts[1].strip():
         current = await get_promo_channel()
         not_set = "o'rnatilmagan"
+
         return await msg.answer(
-            f"📢 Hozirgi reklama kanali: *{escape_md(current) if current else not_set}*\n\n"
-            "O'rnatish uchun: `/kanal @username` yoki `/kanal https://t.me/...`"
+            f"📢 Hozirgi reklama kanali: {current if current else not_set}\n\n"
+            "O'rnatish uchun:\n"
+            "/kanal @username\n"
+            "yoki\n"
+            "/kanal https://t.me/...",
+            parse_mode=None
         )
 
     channel = parts[1].strip()
     await set_promo_channel(channel)
-    await msg.answer(f"✅ Reklama kanali o'rnatildi: *{escape_md(channel)}*")
+
+    await msg.answer(
+        f"✅ Reklama kanali o'rnatildi:\n{channel}",
+        parse_mode=None
+    )
 
 
 async def _profile_text(user_id: int, first_name: str) -> str:
