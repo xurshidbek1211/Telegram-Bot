@@ -172,9 +172,6 @@ async def cb_vs_join(call: CallbackQuery, bot: Bot):
 async def cb_vs_start(call: CallbackQuery, bot: Bot):
     chat_id = int(call.data.split(":")[1])
 
-    if not await _require_admin(call, bot, chat_id, call.from_user.id):
-        return await call.answer("⚠️ Faqat adminlar boshlashi mumkin.", show_alert=True)
-
     games = _get_games()
     game = games.get(chat_id)
     if not game or not game.vs_mode or game.phase != Phase.LOBBY:
@@ -189,12 +186,31 @@ async def cb_vs_start(call: CallbackQuery, bot: Bot):
             show_alert=True,
         )
 
+    # Claim the lobby before the first await. A second callback (including
+    # another admin's callback) now observes STARTING and cannot launch a
+    # second game or accept joins while this launch is in progress.
+    game.phase = Phase.STARTING
+
+    if not await _require_admin(call, bot, chat_id, call.from_user.id):
+        game.phase = Phase.LOBBY
+        return await call.answer("⚠️ Faqat adminlar boshlashi mumkin.", show_alert=True)
+
     await call.answer("✅ VS o'yini boshlanmoqda!")
     await _launch_vs_game(call.message, bot, game)
 
 
 async def _launch_vs_game(msg: Message, bot: Bot, game: Game):
     chat_id = game.chat_id
+
+    # cb_vs_start claims the lobby before its first await.  Refuse direct or
+    # duplicate launches unless that claim is still the current state.
+    if game.phase != Phase.STARTING:
+        logger.warning("VS launch skipped because phase is %s: chat_id=%s", game.phase, chat_id)
+        return
+
+    # Keep VS joins from changing the roster while role assignment awaits
+    # settings/profile/database operations.
+    starting_player_ids = tuple(game.players)
 
     # Save original team members BEFORE role assignment (for win tracking)
     game.vs_red_team = set(game.vs_red_team)
@@ -204,11 +220,43 @@ async def _launch_vs_game(msg: Message, bot: Bot, game: Game):
     from handlers import _assign_roles_with_preferences
     from settings import get_settings
     settings = await get_settings(chat_id)
-    await _assign_roles_with_preferences(
-        game,
-        disabled_roles=settings.disabled_roles,
-        custom_role_configs=settings.custom_role_configs,
-    )
+    try:
+        await _assign_roles_with_preferences(
+            game,
+            disabled_roles=settings.disabled_roles,
+            custom_role_configs=settings.custom_role_configs,
+        )
+    except Exception:
+        logger.exception("VS rollarni tarqatish muvaffaqiyatsiz tugadi: chat_id=%s", chat_id)
+        for player in game.players.values():
+            player.role = None
+        game.phase = Phase.ENDED
+        await bot.send_message(
+            chat_id,
+            "❌ VS o'yinini boshlashda xatolik yuz berdi. Iltimos, yangi lobby oching.",
+        )
+        return
+
+    current_player_ids = tuple(game.players)
+    missing_roles = [
+        player.user_id for player in game.players.values() if player.role is None
+    ]
+    if current_player_ids != starting_player_ids or missing_roles:
+        logger.error(
+            "VS o'yin boshlanishi bekor qilindi: roster_changed=%s missing_roles=%s chat_id=%s",
+            current_player_ids != starting_player_ids,
+            missing_roles,
+            chat_id,
+        )
+        for player in game.players.values():
+            player.role = None
+        game.phase = Phase.ENDED
+        await bot.send_message(
+            chat_id,
+            "❌ VS o'yinchilari yoki rollari holati buzildi. Iltimos, yangi lobby oching.",
+        )
+        return
+
     game.day_number = 1
     game.started_at = time.time()
 

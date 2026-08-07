@@ -1702,6 +1702,7 @@ async def cmd_players(msg: Message):
 
     phase_label = {
         Phase.LOBBY: "Lobby",
+        Phase.STARTING: "Boshlanmoqda",
         Phase.NIGHT: f"{game.day_number}-kecha",
         Phase.DAY:   f"{game.day_number}-kun",
         Phase.VOTING: f"Ovoz berish — {game.day_number}-kun",
@@ -2426,16 +2427,26 @@ async def _launch_game(msg: Message, bot: Bot):
     if game.phase != Phase.LOBBY:
         return await msg.answer("⚠️ O'yin allaqachon boshlangan.")
 
+    # Set this before the first await.  Telegram can deliver a second
+    # /startgame or a private join link while the first start is awaiting
+    # network/database operations.  STARTING makes both paths reject those
+    # mutations immediately.
+    game.phase = Phase.STARTING
+    starting_player_ids = tuple(game.players)
+
     member = await bot.get_chat_member(chat_id, msg.from_user.id)
     is_admin = member.status in ("administrator", "creator")
     chat_settings_pre = await get_settings(chat_id)
     if not is_admin:
         if not chat_settings_pre.member_can_start:
+            game.phase = Phase.LOBBY
             return await msg.answer("⚠️ Bu guruhda faqat adminlar o'yinni boshlay oladi.")
         if msg.from_user.id not in game.players:
+            game.phase = Phase.LOBBY
             return await msg.answer("⚠️ Faqat admin yoki lobby o'yinchilari boshlashi mumkin.")
 
     if len(game.players) < MIN_PLAYERS:
+        game.phase = Phase.LOBBY
         return await msg.answer(
             f"⚠️ Kamida *{MIN_PLAYERS}* o'yinchi kerak. Hozir: *{len(game.players)}*"
         )
@@ -2443,11 +2454,37 @@ async def _launch_game(msg: Message, bot: Bot):
     game.group_link = await _group_link(bot, chat_id)
 
     chat_settings = await get_settings(chat_id)
-    await _assign_roles_with_preferences(
-        game,
-        disabled_roles=chat_settings.disabled_roles,
-        custom_role_configs=chat_settings.custom_role_configs,
-    )
+    try:
+        await _assign_roles_with_preferences(
+            game,
+            disabled_roles=chat_settings.disabled_roles,
+            custom_role_configs=chat_settings.custom_role_configs,
+        )
+    except Exception:
+        logger.exception("Rollarni tarqatish muvaffaqiyatsiz tugadi: chat_id=%s", chat_id)
+        for player in game.players.values():
+            player.role = None
+        game.phase = Phase.ENDED
+        await msg.answer("❌ O'yinni boshlashda xatolik yuz berdi. Iltimos, yangi lobby oching.")
+        return
+
+    current_player_ids = tuple(game.players)
+    missing_roles = [
+        player.user_id for player in game.players.values() if player.role is None
+    ]
+    if current_player_ids != starting_player_ids or missing_roles:
+        logger.error(
+            "O'yin boshlanishi bekor qilindi: roster_changed=%s missing_roles=%s chat_id=%s",
+            current_player_ids != starting_player_ids,
+            missing_roles,
+            chat_id,
+        )
+        for player in game.players.values():
+            player.role = None
+        game.phase = Phase.ENDED
+        await msg.answer("❌ O'yinchilar yoki rollar holati buzildi. Iltimos, yangi lobby oching.")
+        return
+
     game.day_number = 1
 
     for player in game.players.values():

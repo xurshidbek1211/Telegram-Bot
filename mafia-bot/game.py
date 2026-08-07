@@ -46,6 +46,7 @@ class Role(Enum):
 
 class Phase(Enum):
     LOBBY = "lobby"
+    STARTING = "starting"
     NIGHT = "night"
     DAY = "day"
     VOTING = "voting"
@@ -246,6 +247,8 @@ class Game:
     pinned_msg_id: Optional[int] = None
 
     def add_player(self, user_id: int, username: str, first_name: str, last_name: str = "") -> bool:
+        if self.phase != Phase.LOBBY:
+            return False
         if user_id in self.players or len(self.players) >= MAX_PLAYERS:
             return False
         self.players[user_id] = Player(user_id=user_id, username=username, first_name=first_name, last_name=last_name)
