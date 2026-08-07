@@ -1051,8 +1051,7 @@ async def _do_vote_resolution(bot: Bot, game: Game):
         await bot.send_message(
             game.chat_id,
             f"Ovoz berish natijalari:\n\n"
-            f"🛡️ {game.get_display_name(eliminated)} osishdan himoya ishlatdi va omon qoldi! "
-            f"(Qolgan himoya: {ep.hang_protect})",
+            f"🛡️ {game.get_display_name(eliminated)} osishdan himoya ishlatdi va omon qoldi! ",
         )
         game.day_number += 1
         await run_night(bot, game.chat_id)
