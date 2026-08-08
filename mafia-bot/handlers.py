@@ -1,4 +1,4 @@
-import asyncio
+desaimport asyncio
 import logging
 import random
 import time
@@ -2678,16 +2678,34 @@ async def _is_subscribed_to_promo_channel(bot: Bot, user_id: int) -> bool:
     except Exception:
         return False
 
-
-from aiogram.utils.markdown import escape_md
-
 async def _promo_text() -> str:
     channel = await get_promo_channel()
     if not channel:
         return ""
 
     link = channel if channel.startswith("http") or channel.startswith("@") else f"@{channel}"
-    link = escape_md(link)
+
+    link = (
+        link.replace("\\", "\\\\")
+            .replace("_", "\\_")
+            .replace("*", "\\*")
+            .replace("[", "\\[")
+            .replace("]", "\\]")
+            .replace("(", "\\(")
+            .replace(")", "\\)")
+            .replace("~", "\\~")
+            .replace("`", "\\`")
+            .replace(">", "\\>")
+            .replace("#", "\\#")
+            .replace("+", "\\+")
+            .replace("-", "\\-")
+            .replace("=", "\\=")
+            .replace("|", "\\|")
+            .replace("{", "\\{")
+            .replace("}", "\\}")
+            .replace(".", "\\.")
+            .replace("!", "\\!")
+    )
 
     return (
         f"\n\n📢 {link} kanaliga a'zo bo'ling va mukofotlaringiz 2x bo'lsin!"
