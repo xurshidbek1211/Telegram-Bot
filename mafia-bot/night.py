@@ -148,8 +148,11 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
         acting = [p for p in game.alive_mafia_team() if p.role in (Role.DON, Role.MAFIA)]
         if acting and not any(blocked(p.user_id) for p in acting):
             pending[mafia_target] = "mafia"
-            mafia_role = Role.DON if any(p.role == Role.DON for p in acting) else Role.MAFIA
-            _tag(mafia_target, mafia_role)
+            # Every Mafia participant is a visitor/attacker for Afsungar's
+            # counter-kill.  The Don's vote decides the target, but the
+            # night action is carried out by all acting Don/Mafia members.
+            for attacker in acting:
+                _tag(mafia_target, attacker.role)
 
     if yq and yq_t and yq_t in alive and not blocked(yq.user_id):
         k_active = game.get_alive_by_role(Role.KOMISSAR) or game.get_alive_by_role(Role.SERZHANT)
@@ -368,17 +371,18 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
     afsungar = game.get_alive_by_role(Role.AFSUNGAR)
     afs_counters = set()
     if afsungar and afsungar.user_id in pending:
-        cause = pending[afsungar.user_id]
-        role_map = {
-            "mafia": {Role.DON, Role.MAFIA},
-            "yollanma": {Role.YOLLANMA_QOTIL},
-            "qotil": {Role.QOTIL},
-            "kimyogar": {Role.KIMYOGAR},
-            "komissar_kill": {Role.KOMISSAR, Role.SERZHANT},
-        }
+        # Use every actual attacker recorded for the victim. The only
+        # exception is Yollanma Qotil: it kills Afsungar but does not die to
+        # Afsungar's counter-kill.
+        attacker_roles = set(pending_attackers.get(afsungar.user_id, []))
+        killer_roles = attacker_roles - {Role.YOLLANMA_QOTIL}
         for p in game.alive_players():
-            if p.role in role_map.get(cause, set()):
+            if p.role in killer_roles:
                 afs_counters.add(p.user_id)
+
+        # Don or Qotil killing Afsungar is an immediate Afsungar victory.
+        if attacker_roles.intersection({Role.DON, Role.QOTIL}):
+            game.special_winner = "afsungar"
 
     # 13a. Tulki transformation
     tulki = game.get_alive_by_role(Role.TULKI)

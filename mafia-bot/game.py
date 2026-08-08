@@ -91,7 +91,7 @@ ROLE_DESCRIPTIONS_UZ = {
     Role.SOTQIN: "Har tun bir o'yinchini tanlaysiz. Agar u Don, Mafia yoki Qotil bo'lsa, shaxsingizni ochiqlamasdan fosh qila olasiz!",
     Role.QOTIL: "Shahardagi hamma o'lishi kerak, sizdan tashqari! Har tun bir o'yinchini o'ldirasiz.",
     Role.BO_RI: "🔴 Mafiya o'ldirsa → Mafiaga aylanasiz.\n🔵 Komissar o'ldirsa → Serjantga aylanasiz.\n🔪 Qotil o'ldirsa → shu zahoti o'lasiz.",
-    Role.AFSUNGAR: "Kechasi o'ldirilsangiz, o'ldirgan ham halok bo'ladi!\nKunduz osisangiz, birorini o'zingiz bilan olib keta olasiz.",
+    Role.AFSUNGAR: "Kechasi o'ldirilsangiz, o'ldirgan ham halok bo'ladi (Yollanma Qotildan tashqari). Don yoki Qotil sizni o'ldirsa, darhol g'alaba qilasiz.\nKunduz osilsangiz, birorini o'zingiz bilan olib ketasiz: Mafia jamoasini tanlasangiz g'alaba qilasiz.",
     Role.AFERIST: "Har tun biror o'yinchining kunduzgi ovoz berish shaxsini almashtiradi.",
     Role.SEHRGAR: "Don, Qotil yoki Komissar sizni o'ldirmoqchi bo'lsa — urinish behuda. Rahm qilish yoki o'ldirish tanlovingiz bor.\n⚠️ Kunduz osisangiz yoki Afsungar/G'azabkor o'ldirsa — o'lasiz.",
     Role.GAZABKOR: "Har tun 1 ta o'yinchini tanlaysiz. Kamida *3 kishini* tanlab, o'zingizni tanlasangiz — *g'alaba qozonasiz!*",
@@ -196,6 +196,13 @@ class Game:
     players: dict = field(default_factory=dict)
     day_number: int = 0
     winner: Optional[str] = None
+    # Special win states that can be triggered after the player is dead
+    # (currently Afsungar's revenge mechanics).
+    special_winner: Optional[str] = None
+    afsungar_pending_uid: Optional[int] = None
+    # Prevent the timeout continuation from starting a second night after
+    # Afsungar already selected a revenge target.
+    afsungar_revenge_resolved: bool = False
     night_actions: dict = field(default_factory=dict)
     votes: dict = field(default_factory=dict)
     aferist_swaps: dict = field(default_factory=dict)
@@ -353,6 +360,9 @@ class Game:
         return candidates[0] if len(candidates) == 1 else None
 
     def check_win_condition(self) -> Optional[str]:
+        if self.special_winner:
+            return self.special_winner
+
         alive = self.alive_players()
 
         # VS Mode: check team elimination

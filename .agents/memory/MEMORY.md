@@ -12,3 +12,4 @@
 - [Journalist Interview Privacy](journalist-interview-privacy.md) — Journalist receives only non-Mafia visitors with names and roles; Mafia-team visitors are omitted completely.
 - [Day Phase HTML Redesign](day-phase-html.md) — group messages use parse_mode=HTML with <a href="tg://user?id=…"> mentions; DMs keep Markdown; flood-control helpers _safe_send/_safe_edit_text/_safe_edit_markup/_safe_task prevent game freeze.
 - [Geroy System](geroy-system.md) — hero.py: Hero dataclass + DB CRUD + level/xp/damage/missions; heroes table in DB; game.hero_used_today set; handlers: HERO_ROLES, _pending_hero_rename/transfer, day DMs, all callbacks.
+- [Afsungar Mechanics](afsungar-mechanics.md) — track every actual attacker, exempt Yollanma Qotil, preserve special victory, and prevent revenge timeout double-starts.

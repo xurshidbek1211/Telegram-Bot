@@ -78,7 +78,7 @@ PASSIVE_MESSAGES = {
     Role.CITIZEN:  "👨🏼 Siz *Tinch Aholi*siz. Dam oling — ertaga shahar himoyangizga muhtoj!",
     Role.OMADLI:   "🤞🏼 Siz *Omadli*siz. Kechasi nishonga olinsangiz 50% ehtimolda omon qolasiz!",
     Role.BO_RI:    "🐺 Siz *Bo'ri*siz. Dam oling — kimning qo'lidan o'lishingiz kelajagingizni belgilaydi!",
-    Role.AFSUNGAR: "💣 Siz *Afsungar*siz. Kechasi o'ldirilsangiz, o'ldirgan ham halok bo'ladi!",
+    Role.AFSUNGAR: "💣 Siz *Afsungar*siz. Kechasi o'ldirilsangiz, o'ldirgan ham halok bo'ladi (Yollanma Qotildan tashqari). Don yoki Qotil sizni o'ldirsa — darhol g'alaba qilasiz!",
     Role.SEHRGAR:  "🧙‍ Siz *Sehrgar*siz. Don/Qotil/Komissar hujumida siz xabar olasiz va tanlov berasiz.",
     Role.ADMIRAL:  "🧑🏻‍✈️ Siz *Admiral*siz. Komissar+Serjant tirik ekan — o'lmaysiz. Ikkovi o'lsa Komissar bo'lasiz.",
     Role.HAMSHIRA: "👩🏼‍⚕️ Siz *Hamshira*siz. Doktor tirik ekan, dam olasiz. Doktor vafot etsa — siz *Doktorga aylanasiz!*",
@@ -1059,6 +1059,8 @@ async def _do_vote_resolution(bot: Bot, game: Game):
 
     if eliminated.role == Role.AFSUNGAR:
         game.eliminate_player(eliminated_id)
+        game.afsungar_pending_uid = eliminated_id
+        game.afsungar_revenge_resolved = False
         await _send_last_words_dm(bot, game, eliminated_id)
         await bot.send_message(
             game.chat_id,
@@ -1068,9 +1070,13 @@ async def _do_vote_resolution(bot: Bot, game: Game):
             reply_markup=_target_kb(game, "afsungar_revenge", actor_id=eliminated_id),
         )
         await asyncio.sleep(30)
+        if game.afsungar_revenge_resolved:
+            return
+        game.afsungar_pending_uid = None
         winner = game.check_win_condition()
         if winner:
-            await _end_game(bot, game, winner)
+            if game.phase != Phase.ENDED:
+                await _end_game(bot, game, winner)
             return
         game.day_number += 1
         await run_night(bot, game.chat_id)
@@ -1113,10 +1119,17 @@ async def _end_game(bot: Bot, game: Game, winner: str):
         "citizens": ("🏆", "🎉 *Fuqarolar g'alaba qozondi!* Barcha Mafiya yo'q qilindi!"),
         "mafia":    ("🔪", "💀 *Mafiya g'alaba qozondi!* Ular shaharga egalik qildi!"),
         "qotil":    ("🔪", "🔪 *Qotil g'alaba qozondi!* Shahar uning qo'liga o'tdi!"),
+        "afsungar": ("💣", "💣 *Afsungar g'alaba qozondi!* Qasos amalga oshdi!"),
     }
     em, text = msgs.get(winner, ("🏆", "O'yin tugadi."))
 
-    if winner == "mafia":
+    if winner == "afsungar":
+        afsungar_p = next(
+            (p for p in game.players.values() if p.role == Role.AFSUNGAR),
+            None,
+        )
+        winner_ids = {afsungar_p.user_id} if afsungar_p else set()
+    elif winner == "mafia":
         winner_ids = {p.user_id for p in game.players.values() if p.alive and p.role in MAFIA_TEAM}
     elif winner == "qotil":
         q = game.get_alive_by_role(Role.QOTIL)
@@ -3973,22 +3986,36 @@ async def cb_afsungar_revenge(call: CallbackQuery):
     _, tid, cid = call.data.split(":")
     tid, cid = int(tid), int(cid)
     game = games.get(cid)
-    if not game:
+    if (
+        not game
+        or game.phase != Phase.DAY
+        or game.afsungar_pending_uid != call.from_user.id
+    ):
         return await call.answer()
 
     target = game.get_player_by_id(tid)
-    if target and target.alive:
+    if target and target.alive and target.user_id != game.afsungar_pending_uid:
+        game.afsungar_revenge_resolved = True
+        game.afsungar_pending_uid = None
         game.eliminate_player(tid)
         rn = ROLE_NAMES_UZ.get(target.role, "")
         em = ROLE_EMOJIS.get(target.role, "")
+        is_mafia_target = target.role in MAFIA_TEAM
         await call.message.edit_text(
             f"💣 *Afsungar* jahannamga ketayotib *{game.get_display_name(target)}*ni ham olib ketdi!\n"
-            f"Roli: {em} *{rn}*"
+            f"Roli: {em} *{rn}*\n\n"
+            + (
+                "💣 Afsungar Mafia jamoasidan nishon tanlagani uchun g'alaba qozondi!"
+                if is_mafia_target
+                else "Afsungar Mafia jamoasidan bo'lmagan nishonni tanladi va yutqazdi."
+            )
         )
         await call.answer()
+        if is_mafia_target:
+            game.special_winner = "afsungar"
         winner = game.check_win_condition()
         if winner:
-            _safe_task(_end_game(call.bot, game, winner))
+            await _end_game(call.bot, game, winner)
             return
 
     game.day_number += 1
