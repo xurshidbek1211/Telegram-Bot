@@ -102,11 +102,15 @@ async def cmd_vsgame(msg: Message, bot: Bot):
     chat_id = msg.chat.id
     games = _get_games()
 
-    # Block if ANY active game (regular or VS) exists
+    # The shared handlers.games registry is the single source of truth.
+    # A lobby, a starting game, or an in-progress game all block a new mode.
     existing = games.get(chat_id)
-    if existing and existing.phase not in (Phase.LOBBY, Phase.ENDED):
+    if existing and existing.phase != Phase.ENDED:
         mode = "VS" if existing.vs_mode else "odatiy Mafia"
-        return await msg.answer(f"⚠️ Bu guruhda {mode} o'yini davom etmoqda. Avval tugating.")
+        return await msg.answer(
+            f"⚠️ Bu guruhda {mode} lobby yoki o'yini allaqachon mavjud. "
+            "Avval uni tugating yoki bekor qiling."
+        )
 
     # Create new VS lobby (replaces any stale lobby)
     game = Game(chat_id=chat_id, vs_mode=True)

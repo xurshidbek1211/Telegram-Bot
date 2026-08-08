@@ -334,7 +334,7 @@ class Game:
                      Role.YOLLANMA_QOTIL, Role.ADVOKAT, Role.DAYDI, Role.JURNALIST,
                      Role.AFERIST, Role.MINIOR, Role.KIMYOGAR, Role.GAZABKOR,
                      Role.JOKER, Role.SOTQIN, Role.TULKI, Role.LABARANT, Role.QAROQCHI,
-                     Role.KONCHI, Role.RAIS, Role.AYGOQCHI, Role.KOLDUN]:
+                     Role.KONCHI, Role.RAIS, Role.AYGOQCHI, Role.KOLDUN, Role.AFSUNGAR]:
             p = self.get_alive_by_role(role)
             if p:
                 required.add(p.user_id)

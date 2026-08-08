@@ -70,7 +70,7 @@ ROLE_NAMES_UZ = {
 
 PASSIVE_NIGHT_ROLES = {
     Role.CITIZEN, Role.OMADLI,
-    Role.BO_RI, Role.AFSUNGAR, Role.SEHRGAR, Role.ADMIRAL,
+    Role.BO_RI, Role.SEHRGAR, Role.ADMIRAL,
     Role.HAMSHIRA,  # passive while Doctor is alive; auto-becomes Doctor when Doctor dies
 }
 
@@ -1057,31 +1057,6 @@ async def _do_vote_resolution(bot: Bot, game: Game):
         await run_night(bot, game.chat_id)
         return
 
-    if eliminated.role == Role.AFSUNGAR:
-        game.eliminate_player(eliminated_id)
-        game.afsungar_pending_uid = eliminated_id
-        game.afsungar_revenge_resolved = False
-        await _send_last_words_dm(bot, game, eliminated_id)
-        await bot.send_message(
-            game.chat_id,
-            f"Ovoz berish natijalari:\n\n"
-            f"{game.get_display_name(eliminated)} osildi.\n{emoji} {role_name}\n\n"
-            f"*Afsungar* birini o'zi bilan olib ketishi mumkin — 30 soniya ichida tanlang!",
-            reply_markup=_target_kb(game, "afsungar_revenge", actor_id=eliminated_id),
-        )
-        await asyncio.sleep(30)
-        if game.afsungar_revenge_resolved:
-            return
-        game.afsungar_pending_uid = None
-        winner = game.check_win_condition()
-        if winner:
-            if game.phase != Phase.ENDED:
-                await _end_game(bot, game, winner)
-            return
-        game.day_number += 1
-        await run_night(bot, game.chat_id)
-        return
-
     game.eliminate_player(eliminated_id)
     await _send_last_words_dm(bot, game, eliminated_id)
     votes_for = counts.get(eliminated_id, 0)
@@ -1322,6 +1297,12 @@ async def _send_night_actions(bot: Bot, game: Game):
                 await _dm(bot, uid,
                     f"*{game.day_number}-kecha*\n\n"
                     f"👨🏼‍💼 Ertangi ovozda osishdan himoya qilish uchun o'yinchini tanlang ({secs}s):", kb)
+
+        elif role == Role.AFSUNGAR:
+            kb = _with_skip(_target_kb(game, "nafs", actor_id=uid), chat_id)
+            await _dm(bot, uid,
+                f"*{game.day_number}-kecha*\n\n"
+                f"🧞‍♂️ O'zingiz bilan jahannamga olib ketish uchun o'yinchini tanlang ({secs}s):", kb)
 
         elif role == Role.JURNALIST:
             kb = _with_skip(_mafia_target_kb(game, "njurn", actor_id=uid), chat_id)
@@ -1595,6 +1576,11 @@ async def _open_lobby(msg: Message, bot: Bot):
 
     chat_id = msg.chat.id
     existing = games.get(chat_id)
+    if existing and existing.phase != Phase.ENDED and existing.vs_mode:
+        return await msg.answer(
+            "⚠️ Bu guruhda VS rejimi uchun lobby yoki o'yin allaqachon mavjud. "
+            "Avval uni tugating yoki bekor qiling."
+        )
     if existing and existing.phase not in (Phase.LOBBY, Phase.ENDED):
         return await msg.answer(
             "⚠️ O'yin allaqachon davom etmoqda!\n"
@@ -3406,6 +3392,78 @@ async def _night_cb(call: CallbackQuery, action_key, target_id: int, chat_id: in
         _safe_task(_do_night_resolution(call.bot, game))
 
 
+def _cancel_player_night_actions(game: Game, target_id: int):
+    """Remove all pending night actions belonging to or targeting a dead player."""
+    target = game.get_player_by_id(target_id)
+    if target and target.role:
+        game.night_actions.pop(target.role, None)
+        if target.role in (Role.KOMISSAR, Role.SERZHANT):
+            game.night_actions.pop("komissar_mode", None)
+        elif target.role == Role.KIMYOGAR:
+            game.night_actions.pop("kimyogar_mode", None)
+        elif target.role == Role.QAROQCHI:
+            game.night_actions.pop("qaroqchi_mode", None)
+            game.night_actions.pop("qaroqchi_action", None)
+    game.night_actions.pop(target_id, None)
+    game.mafia_votes.pop(target_id, None)
+    for key, value in list(game.night_actions.items()):
+        if value == target_id:
+            game.night_actions.pop(key, None)
+        elif isinstance(value, tuple) and len(value) > 1 and value[1] == target_id:
+            game.night_actions.pop(key, None)
+    game.night_acted_uids.discard(target_id)
+
+
+@router.callback_query(F.data.startswith("nafs:"))
+async def cb_nafs(call: CallbackQuery):
+    """Afsungar privately chooses a target and eliminates them immediately."""
+    _, tid, cid = call.data.split(":")
+    tid, cid = int(tid), int(cid)
+    game = games.get(cid)
+    if not game or game.phase != Phase.NIGHT:
+        return await call.answer("⚠️ Kecha tugagan.", show_alert=True)
+
+    actor = game.get_player_by_id(call.from_user.id)
+    target = game.get_player_by_id(tid)
+    if not actor or not actor.alive or actor.role != Role.AFSUNGAR:
+        return await call.answer("⚠️ Bu sizning harakatingiz emas.", show_alert=True)
+    if actor.user_id in game.night_acted_uids:
+        return await call.answer("⚠️ Siz bu kecha allaqachon tanlov qildingiz.", show_alert=True)
+    if not target or not target.alive or target.user_id == actor.user_id:
+        return await call.answer("⚠️ Bu o'yinchi mavjud emas.", show_alert=True)
+
+    _cancel_player_night_actions(game, target.user_id)
+    game.eliminate_player(target.user_id)
+    game.night_actions[Role.AFSUNGAR] = target.user_id
+    game.night_acted_uids.add(actor.user_id)
+
+    target_name = (target.first_name or "Noma'lum").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    mention = f'<a href="tg://user?id={target.user_id}">{target_name}</a>'
+    role_emoji = ROLE_EMOJIS.get(target.role, "")
+    role_name = ROLE_NAMES_UZ.get(target.role, "")
+    await call.answer("✅ Nishon tanlandi.")
+    try:
+        await call.message.edit_text("✅ Nishon tanlandi. O'yinchi shu zahoti chiqarildi.")
+    except Exception:
+        pass
+    await _safe_send(
+        call.bot,
+        game.chat_id,
+        f"🧞‍♂️ Afsungar {mention}ni o'zi bilan birga jahannamiga olib ketdi...\n\n"
+        f"U {role_emoji} {role_name} edi.",
+        parse_mode="HTML",
+    )
+    await _send_last_words_dm(call.bot, game, target.user_id)
+
+    winner = game.check_win_condition()
+    if winner:
+        game.cancel_phase_task()
+        await _end_game(call.bot, game, winner)
+    elif game.all_night_actions_done():
+        game.cancel_phase_task()
+        _safe_task(_do_night_resolution(call.bot, game))
+
+
 async def _notify_mafia_of_vote(bot: Bot, game: Game, voter_name: str, target_name: str, is_don: bool):
     """Send vote notification DM to all visible Mafia members."""
     if is_don:
@@ -3997,47 +4055,6 @@ async def cb_dvote(call: CallbackQuery, bot: Bot):
             )
         except Exception:
             pass
-
-
-@router.callback_query(F.data.startswith("afsungar_revenge:"))
-async def cb_afsungar_revenge(call: CallbackQuery):
-    _, tid, cid = call.data.split(":")
-    tid, cid = int(tid), int(cid)
-    game = games.get(cid)
-    if (
-        not game
-        or game.phase != Phase.DAY
-        or game.afsungar_pending_uid != call.from_user.id
-    ):
-        return await call.answer()
-
-    target = game.get_player_by_id(tid)
-    if target and target.alive and target.user_id != game.afsungar_pending_uid:
-        game.afsungar_revenge_resolved = True
-        game.afsungar_pending_uid = None
-        game.eliminate_player(tid)
-        rn = ROLE_NAMES_UZ.get(target.role, "")
-        em = ROLE_EMOJIS.get(target.role, "")
-        is_mafia_target = target.role in MAFIA_TEAM
-        await call.message.edit_text(
-            f"💣 *Afsungar* jahannamga ketayotib *{game.get_display_name(target)}*ni ham olib ketdi!\n"
-            f"Roli: {em} *{rn}*\n\n"
-            + (
-                "💣 Afsungar Mafia jamoasidan nishon tanlagani uchun g'alaba qozondi!"
-                if is_mafia_target
-                else "Afsungar Mafia jamoasidan bo'lmagan nishonni tanladi va yutqazdi."
-            )
-        )
-        await call.answer()
-        if is_mafia_target:
-            game.special_winner = "afsungar"
-        winner = game.check_win_condition()
-        if winner:
-            await _end_game(call.bot, game, winner)
-            return
-
-    game.day_number += 1
-    _safe_task(run_night(call.bot, game.chat_id))
 
 
 @router.callback_query(F.data.startswith("nkonchi:"))
