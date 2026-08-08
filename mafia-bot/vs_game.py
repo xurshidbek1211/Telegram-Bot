@@ -408,10 +408,32 @@ async def cb_vs_newgame(call: CallbackQuery, bot: Bot):
     await call.answer()
 
     games = _get_games()
-    # Block if a fresh active game already started
+    # Re-show the existing VS lobby without replacing its Game or roster.
     current = games.get(chat_id)
+    if current and current.vs_mode and current.phase == Phase.LOBBY:
+        if current.lobby_msg_id:
+            try:
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=current.lobby_msg_id,
+                    text=_lobby_text(current),
+                    reply_markup=_lobby_kb(chat_id),
+                    parse_mode="Markdown",
+                )
+            except Exception:
+                # The callback is still acknowledged, but never create a
+                # second lobby or replace the existing Game object.
+                logger.debug("VS lobby xabarini yangilab bo'lmadi: chat_id=%s", chat_id)
+        return
+
+    # Block if a regular lobby or any fresh active game already exists.
     if current and current.phase not in (Phase.LOBBY, Phase.ENDED):
         return await bot.send_message(chat_id, "⚠️ O'yin allaqachon davom etmoqda.")
+    if current and current.phase == Phase.LOBBY:
+        return await bot.send_message(
+            chat_id,
+            "⚠️ Bu guruhda boshqa rejimning lobby'si allaqachon mavjud."
+        )
 
     game = Game(chat_id=chat_id, vs_mode=True)
     game.phase = Phase.LOBBY

@@ -1,4 +1,5 @@
 import asyncio
+from html import escape as escape_html
 import logging
 import random
 import time
@@ -2814,7 +2815,7 @@ async def cmd_tekshiruv(msg: Message):
 
 
 @router.message(Command("give"))
-async def cmd_give(msg: Message):
+async def cmd_give(msg: Message, bot: Bot):
     if msg.chat.type == "private":
         return await msg.answer("⚠️ Bu buyruq faqat guruhda ishlaydi.")
 
@@ -2827,6 +2828,32 @@ async def cmd_give(msg: Message):
     if amount <= 0:
         return await msg.answer("❌ Miqdor musbat son bo'lishi kerak.")
 
+    # Direct transfer: /give <amount> <telegram_user_id>
+    if len(parts) >= 3 and parts[2].isdigit():
+        target_id = int(parts[2])
+        if target_id == giver.id:
+            return await msg.answer("❌ O'zingizga o'tkazib bo'lmaydi.")
+        target_p = await get_profile(target_id)
+        if not await transfer_diamond(giver.id, target_id, amount):
+            return await msg.answer("❌ Yetarli olmos yo'q.")
+        sender_name = escape_html(giver.first_name or "Noma'lum")
+        target_name = escape_html(target_p.first_name or str(target_id))
+        try:
+            await bot.send_message(
+                target_id,
+                f'💎 <a href="tg://user?id={giver.id}">{sender_name}</a> '
+                f'sizga {amount} ta Almas yubordi.',
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        return await msg.answer(
+            f'✅ <a href="tg://user?id={giver.id}">{sender_name}</a> '
+            f'<a href="tg://user?id={target_id}">{target_name}</a>ga '
+            f'{amount} ta Almas yubordi.',
+            parse_mode="HTML",
+        )
+
     if msg.reply_to_message and msg.reply_to_message.from_user:
         target = msg.reply_to_message.from_user
         if target.is_bot:
@@ -2837,6 +2864,17 @@ async def cmd_give(msg: Message):
         await get_profile(target.id, target.first_name)
         if not await transfer_diamond(giver.id, target.id, amount):
             return await msg.answer("❌ Yetarli olmos yo'q.")
+        sender_name = escape_html(giver.first_name or "Noma'lum")
+        try:
+            await bot.send_message(
+                target.id,
+                f'💎 <a href="tg://user?id={giver.id}">'
+                f'{sender_name}</a> '
+                f'sizga {amount} ta Almas yubordi.',
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
         return await msg.answer(
             f'💎 <a href="tg://user?id={giver.id}">{giver.first_name}</a> '
             f'<a href="tg://user?id={target.id}">{target.first_name}</a>ga {amount} olmos o\'tkazdi!',
@@ -2899,7 +2937,7 @@ async def cb_claim_diamond(call: CallbackQuery):
 
 
 @router.message(Command("money"))
-async def cmd_money(msg: Message):
+async def cmd_money(msg: Message, bot: Bot):
     if msg.chat.type == "private":
         return await msg.answer("⚠️ Bu buyruq faqat guruhda ishlaydi.")
 
@@ -2912,6 +2950,32 @@ async def cmd_money(msg: Message):
     if amount <= 0:
         return await msg.answer("❌ Miqdor musbat son bo'lishi kerak.")
 
+    # Direct transfer: /money <amount> <telegram_user_id>
+    if len(parts) >= 3 and parts[2].isdigit():
+        target_id = int(parts[2])
+        if target_id == giver.id:
+            return await msg.answer("❌ O'zingizga o'tkazib bo'lmaydi.")
+        target_p = await get_profile(target_id)
+        if not await transfer_dollar(giver.id, target_id, amount):
+            return await msg.answer("❌ Yetarli pul yo'q.")
+        sender_name = escape_html(giver.first_name or "Noma'lum")
+        target_name = escape_html(target_p.first_name or str(target_id))
+        try:
+            await bot.send_message(
+                target_id,
+                f'💵 <a href="tg://user?id={giver.id}">{sender_name}</a> '
+                f'sizga {amount}$ yubordi.',
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+        return await msg.answer(
+            f'✅ <a href="tg://user?id={giver.id}">{sender_name}</a> '
+            f'<a href="tg://user?id={target_id}">{target_name}</a>ga '
+            f'{amount}$ yubordi.',
+            parse_mode="HTML",
+        )
+
     if msg.reply_to_message and msg.reply_to_message.from_user:
         target = msg.reply_to_message.from_user
         if target.is_bot:
@@ -2922,6 +2986,17 @@ async def cmd_money(msg: Message):
         await get_profile(target.id, target.first_name)
         if not await transfer_dollar(giver.id, target.id, amount):
             return await msg.answer("❌ Yetarli pul yo'q.")
+        sender_name = escape_html(giver.first_name or "Noma'lum")
+        try:
+            await bot.send_message(
+                target.id,
+                f'💵 <a href="tg://user?id={giver.id}">'
+                f'{sender_name}</a> '
+                f'sizga {amount}$ yubordi.',
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
         return await msg.answer(
             f'💵 <a href="tg://user?id={giver.id}">{giver.first_name}</a> '
             f'<a href="tg://user?id={target.id}">{target.first_name}</a>ga {amount}$ o\'tkazdi!',
