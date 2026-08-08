@@ -48,18 +48,19 @@ def _lobby_text(game: Game) -> str:
     red_players = [p for uid, p in game.players.items() if uid in game.vs_red_team]
     blue_players = [p for uid, p in game.players.items() if uid in game.vs_blue_team]
 
-    red_list = "\n".join(f"• {game.get_display_name(p)}" for p in red_players) or "  _(hech kim yo'q)_"
-    blue_list = "\n".join(f"• {game.get_display_name(p)}" for p in blue_players) or "  _(hech kim yo'q)_"
+    text = "Ro'yxatdan o'tish davom etmoqda!\n\n"
 
-    return (
-        f"⚔️ *VS MODE — RO'YXAT*\n\n"
-        f"🔴 *Qizil jamoa* ({len(red_players)})\n{red_list}\n\n"
-        f"🔵 *Ko'k jamoa* ({len(blue_players)})\n{blue_list}\n\n"
-        f"Jami o'yinchilar: *{len(game.players)}* (minimum {MIN_PLAYERS})\n"
-        f"Tayyor bo'lgach admin ▶️ tugmasini bossin."
-    )
+    if blue_players:
+        for i, p in enumerate(blue_players, 1):
+            text += f"🔵 {i}. {game.get_display_name(p)}\n"
 
+    if red_players:
+        for i, p in enumerate(red_players, 1):
+            text += f"🔴 {i}. {game.get_display_name(p)}\n"
 
+    text += f"\nJami: {len(game.players)} ta"
+
+    return text
 async def _update_lobby(bot: Bot, game: Game):
     if game.lobby_msg_id:
         try:
