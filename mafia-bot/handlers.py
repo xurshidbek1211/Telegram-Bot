@@ -417,27 +417,31 @@ def _lobby_kb(chat_id: int, bot_username: Optional[str] = None) -> InlineKeyboar
 
 
 def _lobby_text_html(game: Game) -> str:
-    """HTML formatida lobby matni (mention bilan)."""
-    lines = []
-    for i, p in enumerate(game.players.values(), 1):
+    """Registration lobby text shared by normal and VS games."""
+    names = []
+    for p in game.players.values():
         name = f"{p.first_name} {p.last_name}".strip() if p.last_name else p.first_name
-        safe = name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        lines.append(f'{i}. <a href="tg://user?id={p.user_id}">{safe}</a>')
-    player_list = "\n".join(lines) if lines else "Hali o'yinchilar yo'q."
+        safe = escape_html(name or "Noma'lum")
+        names.append(f'<a href="tg://user?id={p.user_id}">{safe}</a>')
+    player_list = ", ".join(names) if names else "Hali o'yinchilar yo'q."
     return (
-        f"📋 <b>Ro'yxatdan o'tish davom etmoqda!</b>\n\n"
-        f"👥 Ro'yxatdan o'tganlar: {len(game.players)} ta\n\n"
-        f"{player_list}"
+        "🎮 Ro'yxatdan o'tish davom etmoqda!\n\n"
+        "👥 Ro'yxatdan o'tganlar:\n\n"
+        f"👤 {player_list}\n\n"
+        f"Jami: {len(game.players)} ta"
     )
 
 
 def _lobby_text(game: Game) -> str:
-    return (
-        f"Ro'yxatdan o'tish davom etmoqda!\n\n"
-        f"Ro'yxatdan o'tganlar:\n"
-        f"{_player_list(game)}\n\n"
-        f"Jami: {len(game.players)} ta"
-    )
+    return _lobby_text_html(game)
+
+
+def _lobby_reply_markup(game: Game, bot_username: Optional[str] = None) -> InlineKeyboardMarkup:
+    """Return the mode-specific buttons without changing the current game."""
+    if game.vs_mode:
+        from vs_game import _lobby_kb as vs_lobby_kb
+        return vs_lobby_kb(game.chat_id)
+    return _lobby_kb(game.chat_id, bot_username)
 
 
 async def _update_lobby_message(bot: Bot, game: Game):
@@ -449,11 +453,37 @@ async def _update_lobby_message(bot: Bot, game: Game):
             chat_id=game.chat_id,
             message_id=game.lobby_msg_id,
             text=_lobby_text_html(game),
-            reply_markup=_lobby_kb(game.chat_id, bot_username),
+            reply_markup=_lobby_reply_markup(game, bot_username),
             parse_mode="HTML",
         )
     except Exception:
         pass
+
+
+async def _relocate_lobby_message(bot: Bot, game: Game) -> bool:
+    """Move an unchanged lobby to the end of the chat with a fresh message id."""
+    old_message_id = game.lobby_msg_id
+    if not old_message_id or game.phase != Phase.LOBBY:
+        return False
+
+    bot_username = await _get_bot_username(bot)
+    sent = await _safe_send(
+        bot,
+        game.chat_id,
+        _lobby_text_html(game),
+        reply_markup=_lobby_reply_markup(game, bot_username),
+        parse_mode="HTML",
+    )
+    if not sent:
+        return False
+
+    game.lobby_msg_id = sent.message_id
+    try:
+        await bot.delete_message(game.chat_id, old_message_id)
+    except Exception:
+        pass
+    await _auto_pin(bot, game, sent.message_id)
+    return True
 
 
 def _player_list(game: Game, show_roles: bool = False) -> str:
@@ -1577,27 +1607,14 @@ async def _open_lobby(msg: Message, bot: Bot):
 
     chat_id = msg.chat.id
     existing = games.get(chat_id)
-    if existing and existing.phase != Phase.ENDED and existing.vs_mode:
-        return await msg.answer(
-            "⚠️ Bu guruhda VS rejimi uchun lobby yoki o'yin allaqachon mavjud. "
-            "Avval uni tugating yoki bekor qiling."
-        )
+    if existing and existing.phase == Phase.LOBBY:
+        await _relocate_lobby_message(bot, existing)
+        return
     if existing and existing.phase not in (Phase.LOBBY, Phase.ENDED):
         return await msg.answer(
             "⚠️ O'yin allaqachon davom etmoqda!\n"
             "Yangi ro'yxat ochish uchun avval /endgame bilan tugatish kerak."
         )
-
-    if existing and existing.phase == Phase.LOBBY:
-        bot_username = await _get_bot_username(bot)
-        sent = await msg.answer(
-            _lobby_text_html(existing),
-            reply_markup=_lobby_kb(chat_id, bot_username),
-            parse_mode="HTML",
-        )
-        existing.lobby_msg_id = sent.message_id
-        await _auto_pin(bot, existing, sent.message_id)
-        return
 
     games[chat_id] = Game(chat_id=chat_id)
     game = games[chat_id]
@@ -1742,14 +1759,9 @@ async def cmd_leave(msg: Message, bot: Bot):
 
     if game.phase == Phase.LOBBY:
         if user.id not in game.players:
-            return await msg.answer("⚠️ Siz lobbyda emassiz.")
+            return
         game.remove_player(user.id)
-        await msg.answer(
-            f"👋 *{escape_md(user.first_name)}* lobbydan chiqdi.\n\n"
-            f"*O'yinchilar ({len(game.players)}/{MIN_PLAYERS} min):*\n"
-            f"{_player_list(game)}",
-            reply_markup=_lobby_kb(chat_id),
-        )
+        await _update_lobby_message(bot, game)
         return
 
     # ── Game in progress ──
@@ -3388,7 +3400,9 @@ async def cb_newgame_btn(call: CallbackQuery, bot: Bot):
     if existing and existing.phase not in (Phase.LOBBY, Phase.ENDED):
         return await call.answer("⚠️ O'yin allaqachon davom etmoqda!", show_alert=True)
     if existing and existing.phase == Phase.LOBBY:
-        return await call.answer("⚠️ Lobby allaqachon mavjud! Yangi lobby yaratib bo'lmaydi.", show_alert=True)
+        await call.answer("✅ Mavjud lobby chat oxiriga ko'chirildi.")
+        await _relocate_lobby_message(bot, existing)
+        return
 
     games[chat_id] = Game(chat_id=chat_id)
     game = games[chat_id]
@@ -3420,16 +3434,6 @@ async def cb_join(call: CallbackQuery, bot: Bot):
         await call.answer(f"✅ Qo'shildingiz! Jami: {len(game.players)} o'yinchi.")
         # Update the lobby message (whether it's this message or the pinned lobby)
         await _update_lobby_message(bot, game)
-        # Also edit this message if it's not the lobby message
-        if call.message.message_id != game.lobby_msg_id:
-            try:
-                bot_username = await _get_bot_username(bot)
-                await call.message.edit_text(
-                    _lobby_text(game),
-                    reply_markup=_lobby_kb(chat_id, bot_username),
-                )
-            except Exception:
-                pass
         try:
             await call.bot.send_message(user.id,
                 "✅ *O'yinga qo'shildingiz!*\n\nO'yin boshlanishini kuting. "

@@ -45,34 +45,13 @@ def _lobby_kb(chat_id: int) -> InlineKeyboardMarkup:
 
 
 def _lobby_text(game: Game) -> str:
-    red_players = [p for uid, p in game.players.items() if uid in game.vs_red_team]
-    blue_players = [p for uid, p in game.players.items() if uid in game.vs_blue_team]
+    from handlers import _lobby_text_html
+    return _lobby_text_html(game)
 
-    text = "Ro'yxatdan o'tish davom etmoqda!\n\n"
 
-    if blue_players:
-        for i, p in enumerate(blue_players, 1):
-            text += f"🔵 {i}. {game.get_display_name(p)}\n"
-
-    if red_players:
-        for i, p in enumerate(red_players, 1):
-            text += f"🔴 {i}. {game.get_display_name(p)}\n"
-
-    text += f"\nJami: {len(game.players)} ta"
-
-    return text
 async def _update_lobby(bot: Bot, game: Game):
-    if game.lobby_msg_id:
-        try:
-            await bot.edit_message_text(
-                chat_id=game.chat_id,
-                message_id=game.lobby_msg_id,
-                text=_lobby_text(game),
-                reply_markup=_lobby_kb(game.chat_id),
-                parse_mode="Markdown",
-            )
-        except Exception:
-            pass
+    from handlers import _update_lobby_message
+    await _update_lobby_message(bot, game)
 
 
 async def _dm(bot: Bot, uid: int, text: str, kb=None):
@@ -105,6 +84,10 @@ async def cmd_vsgame(msg: Message, bot: Bot):
     # The shared handlers.games registry is the single source of truth.
     # A lobby, a starting game, or an in-progress game all block a new mode.
     existing = games.get(chat_id)
+    if existing and existing.phase == Phase.LOBBY:
+        from handlers import _relocate_lobby_message
+        await _relocate_lobby_message(bot, existing)
+        return
     if existing and existing.phase != Phase.ENDED:
         mode = "VS" if existing.vs_mode else "odatiy Mafia"
         return await msg.answer(
@@ -125,7 +108,7 @@ async def cmd_vsgame(msg: Message, bot: Bot):
     sent = await msg.answer(
         _lobby_text(game),
         reply_markup=_lobby_kb(chat_id),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
     game.lobby_msg_id = sent.message_id
 
@@ -410,20 +393,9 @@ async def cb_vs_newgame(call: CallbackQuery, bot: Bot):
     games = _get_games()
     # Re-show the existing VS lobby without replacing its Game or roster.
     current = games.get(chat_id)
-    if current and current.vs_mode and current.phase == Phase.LOBBY:
-        if current.lobby_msg_id:
-            try:
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=current.lobby_msg_id,
-                    text=_lobby_text(current),
-                    reply_markup=_lobby_kb(chat_id),
-                    parse_mode="Markdown",
-                )
-            except Exception:
-                # The callback is still acknowledged, but never create a
-                # second lobby or replace the existing Game object.
-                logger.debug("VS lobby xabarini yangilab bo'lmadi: chat_id=%s", chat_id)
+    if current and current.phase == Phase.LOBBY:
+        from handlers import _relocate_lobby_message
+        await _relocate_lobby_message(bot, current)
         return
 
     # Block if a regular lobby or any fresh active game already exists.
@@ -447,6 +419,6 @@ async def cb_vs_newgame(call: CallbackQuery, bot: Bot):
         chat_id,
         _lobby_text(game),
         reply_markup=_lobby_kb(chat_id),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
     game.lobby_msg_id = sent.message_id
