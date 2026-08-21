@@ -807,6 +807,11 @@ async def _do_night_resolution(bot: Bot, game: Game):
         events.append(
             f"😴 *{game.get_display_name(p)}* uxlab qolgani uchun o'yindan chiqarildi. Roli: {em} *{rn}*"
         )
+        new_don = game.promote_new_don(p.role)
+        if new_don:
+            await _dm(bot, new_don.user_id,
+                "🤵🏻 *Don o'yindan chiqarildi!* Siz endi yangi *Don*siz.\n"
+                "Donning barcha vakolatlarini qabul qildingiz.")
 
     game.phase = Phase.DAY
 
@@ -1089,6 +1094,11 @@ async def _do_vote_resolution(bot: Bot, game: Game):
         return
 
     game.eliminate_player(eliminated_id)
+    new_don = game.promote_new_don(eliminated.role)
+    if new_don:
+        await _dm(bot, new_don.user_id,
+            "🤵🏻 *Don osildi!* Siz endi yangi *Don*siz.\n"
+            "Donning barcha vakolatlarini qabul qildingiz.")
     await _send_last_words_dm(bot, game, eliminated_id)
     votes_for = counts.get(eliminated_id, 0)
     votes_against = sum(c for tid, c in counts.items() if tid != eliminated_id)
@@ -1785,20 +1795,17 @@ async def cmd_leave(msg: Message, bot: Bot):
     )
 
     # Don replacement: if leaver was Don, promote random alive Mafia
-    if role == Role.DON:
-        alive_mafia = [p for p in game.alive_players() if p.role == Role.MAFIA]
-        if alive_mafia:
-            new_don = random.choice(alive_mafia)
-            new_don.role = Role.DON
-            try:
-                await bot.send_message(
-                    new_don.user_id,
-                    "🤵🏻 *Don o'yindan chiqdi!* Siz endi yangi *Don*siz.\n"
-                    "Donning barcha vakolatlarini qabul qildingiz.",
-                    parse_mode="Markdown",
-                )
-            except Exception:
-                pass
+    new_don = game.promote_new_don(role)
+    if new_don:
+        try:
+            await bot.send_message(
+                new_don.user_id,
+                "🤵🏻 *Don o'yindan chiqdi!* Siz endi yangi *Don*siz.\n"
+                "Donning barcha vakolatlarini qabul qildingiz.",
+                parse_mode="Markdown",
+            )
+        except Exception:
+            pass
 
     winner = game.check_win_condition()
     if winner:

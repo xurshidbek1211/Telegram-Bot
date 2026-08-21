@@ -52,6 +52,8 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
         else:
             game.blocked.add(kez_target)
             _record_visit(game, _uid(game, Role.KEZUVCHI), kez_target)
+            await _dm(bot, kez_target,
+                "Ana 💊 dori ta'sir qila boshladi, bir kun uxlab qolding... 💃")
 
     def blocked(uid): return uid in game.blocked
 
@@ -317,10 +319,19 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
     # 8. Doctor / kimyogar saves
     doc = game.get_alive_by_role(Role.DOCTOR)
     saves = set()
+    doc_target = None
     if doc and not blocked(doc.user_id):
         ds = actions.get(Role.DOCTOR)
         if ds:
-            saves.add(ds)
+            if ds == doc.user_id and doc.doctor_self_heal_used:
+                # Doctor may only heal themselves once per game.
+                await _dm(bot, doc.user_id,
+                    "💊 O'zingizni faqat *bir marta* davolay olasiz — bu imkoniyatingiz allaqachon ishlatilgan!")
+            else:
+                if ds == doc.user_id:
+                    doc.doctor_self_heal_used = True
+                doc_target = ds
+                saves.add(ds)
     if kim_save:
         saves.add(kim_save)
 
@@ -347,12 +358,57 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
         events.append(f"🍀 *{game.get_display_name(omadli)}* (Omadli) — o'lim daqiqasida omon qoldi!")
 
     # 11. Remove saved + shop shield / killer_protect items
+    ATTACKER_LABELS = {
+        "mafia": ("🤵🏻", "Don"),
+        "qotil": ("🔪", "Qotil"),
+        "komissar_kill": ("🔫", "Komissar"),
+        "yollanma": ("🎯", "Yollanma Qotil"),
+        "komissar_counter": ("🎯", "Yollanma Qotil"),
+        "kimyogar": ("☠️", "Kimyogar"),
+        "labarant": ("🧪", "Labarant"),
+        "koldun": ("🧙", "Koldun"),
+        "qaroqchi_hp": ("🏴‍☠️", "Qaroqchi"),
+        "konchi_mine": ("⛏️", "Konchi"),
+    }
+    doctor_saved_someone = False
     for sid in saves:
         if sid in pending:
-            pending.pop(sid)
+            cause = pending.pop(sid)
             sp = alive.get(sid)
             if sp:
                 events.append(f"💊 *{game.get_display_name(sp)}* himoya qilindi va omon qoldi!")
+            # If this specific save was made by the Doctor (not Kimyogar),
+            # send the dedicated Doctor rescue DMs.
+            if doc and sp and sid == doc_target and not blocked(doc.user_id):
+                doctor_saved_someone = True
+                em, nm = ATTACKER_LABELS.get(cause, ("", ""))
+                if sid == doc.user_id:
+                    await _dm(bot, doc.user_id, "🛡 👨🏼‍⚕️️ Siz o'zingizni tungi hujumdan saqlab qoldingiz!")
+                else:
+                    if nm:
+                        await _dm(bot, sid, f"{em} *{nm}* sizga hujum qildi, ammo 👨🏼‍⚕️️ doktor sizni saqlab qoldi.")
+                        await _dm(bot, doc.user_id,
+                            f"🛡 👨🏼‍⚕️️ Doktor tunda *{game.get_display_name(sp)}*ni {em} {nm} hujumidan qutqarib qoldi!")
+                    else:
+                        await _dm(bot, sid, "👨🏼‍⚕️️ Doktor sizni tungi hujumdan saqlab qoldi.")
+                        await _dm(bot, doc.user_id,
+                            f"🛡 👨🏼‍⚕️️ Doktor tunda *{game.get_display_name(sp)}*ni tungi hujumdan qutqarib qoldi!")
+
+    # 11a. Doctor also cancels a Kezuvchi block if they targeted the same player.
+    if doc and doc_target and kez_target and doc_target == kez_target and doc_target in game.blocked \
+            and not blocked(doc.user_id):
+        game.blocked.discard(doc_target)
+        doctor_saved_someone = True
+        sp = alive.get(doc_target)
+        if sp:
+            await _dm(bot, doc_target, "💃 *Kezuvchi* sizga dori bermoqchi bo'ldi, ammo 👨🏼‍⚕️️ doktor sizni saqlab qoldi!")
+            if doc_target != doc.user_id:
+                await _dm(bot, doc.user_id,
+                    f"🛡 👨🏼‍⚕️️ Doktor tunda *{game.get_display_name(sp)}*ni 💃 Kezuvchi hujumidan qutqarib qoldi!")
+
+    # 11b. If the Doctor didn't manage to rescue anyone this night, let them know.
+    if doc and not blocked(doc.user_id) and not doctor_saved_someone:
+        await _dm(bot, doc.user_id, "👨🏼‍⚕️️ Doktor yordam berolmadi!")
 
     for tid, cause in list(pending.items()):
         tp = alive.get(tid)
@@ -430,10 +486,8 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
     # 14a. Don replacement: if Don was killed this night, promote a random alive Mafia
     don_just_died = any(p.role == Role.DON for p, _ in eliminated)
     if don_just_died:
-        alive_mafia = [p for p in game.alive_players() if p.role == Role.MAFIA]
-        if alive_mafia:
-            new_don = random.choice(alive_mafia)
-            new_don.role = Role.DON
+        new_don = game.promote_new_don(Role.DON)
+        if new_don:
             await _dm(bot, new_don.user_id,
                 "🤵🏻 *Don o'ldirildi!* Siz endi yangi *Don*siz.\n"
                 "Donning barcha vakolatlarini qabul qildingiz.")
@@ -536,13 +590,14 @@ async def resolve_night(game: Game, bot: Bot) -> tuple[list[dict], list[str]]:
         await add_dollar(rais_t, money_amount)
         rais_target = alive[rais_t]
         reward_msg = f"💰 *Rais* tomonidan *{money_amount}$* sovg'a olindingiz!"
+        rais_self_msg = f"💰 *{game.get_display_name(rais_target)}*ga *{money_amount}$* sovg'a yubordingiz!"
         if random.random() < 0.20:
             diamond_amount = random.randint(1, 2)
             await add_diamond(rais_t, diamond_amount)
             reward_msg += f"\n💎 Bonus: *{diamond_amount} Almas* ham olindingiz!"
+            rais_self_msg += f"\n💎 Bonus: *{diamond_amount} Almas* ham yubordingiz!"
         await _dm(bot, rais_t, reward_msg)
-        await _dm(bot, rais.user_id,
-            f"💰 *{game.get_display_name(rais_target)}*ga muvaffaqiyatli sovg'a yubordingiz!")
+        await _dm(bot, rais.user_id, rais_self_msg)
 
     # 21. Komissar result DM
     if komissar_result:

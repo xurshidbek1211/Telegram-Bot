@@ -81,7 +81,7 @@ ROLE_DESCRIPTIONS_UZ = {
     Role.ADVOKAT: "Har tun bir o'yinchini tanlaysiz. Tanlangan o'yinchi ertangi ovoz berishda osilmaydi — hatto eng ko'p ovoz olsa ham. Himoya faqat 1 kun amal qiladi.",
     Role.JURNALIST: "Har tun kimnikiga intervyu olishga borasiz va o'sha uyga kelgan *barcha* o'yinchilarni ko'rasiz.",
     Role.KOMISSAR: "Har tun bir o'yinchini tekshirasiz. Tekshirilgan o'yinchining haqiqiy roli sizga shaxsiy xabarda ko'rinadi. Agar u Mafia jamoasiga mansub bo'lsa, guruhga darhol fosh etiladi va ovoz berish boshlanadi.",
-    Role.DOCTOR: "Har tun bir o'yinchini yo'q qilinishdan himoya qilasiz. O'zingizni ham himoya qila olasiz.",
+    Role.DOCTOR: "Siz - 👨🏼‍⚕️️ Doktorsiz!\nTunda kimnidir qutqarib qolishingiz mumkin... O'zingizni esa faqat *bir marta* davolay olasiz.",
     Role.SERZHANT: "Komissar har kecha kimni tekshirgani haqida sizga xabar beradi.\n⚠️ Komissar o'lsa, *siz uning o'rnini egallaysiz.*",
     Role.CITIZEN: "Vazifangiz — Mafiyani topish va ovoz berish orqali ularni osish.",
     Role.DAYDI: "Har tun xohlagan odamning uyiga borasiz va o'sha kechasi *kimlar kelganini* ko'rasiz.",
@@ -104,7 +104,7 @@ ROLE_DESCRIPTIONS_UZ = {
     Role.QAROQCHI: "Erkin rol! Har kecha faqat *1 ta amal* tanlaysiz:\n💰 *Pul o'g'irlash* — O'yinchidan 50–100$ o'g'irlaysiz. Puli kam bo'lsa, uning 50% joni ketadi.\n⚔️ *Jon olish* — O'yinchining 50% joni ketadi. Jon 0% ga tushsa o'ladi.",
     # New roles
     Role.HAMSHIRA: "🔵 Fuqarolar jamoasi. Doktor tirik ekan — dam olasiz. *Doktor vafot etsa*, siz avtomatik ravishda *Doktorga aylanasiz* va uning barcha imkoniyatlarini olasiz!",
-    Role.RAIS: "⚪ Mustaqil. Har kecha 1 nafar o'yinchini tanlaysiz va unga *50–100$ va 20% ehtimol bilan 1–2 Almas* yuborasiz. O'yin oxirigacha *tirik qolsangiz g'alaba!*",
+    Role.RAIS: "Siz - 💰 Raissiz!\nSiz har tunda kimgadir 1–100$ oralig'ida dollar tarqatasiz! Siz erkinsiz! Siz tirik qolsangiz — yutasiz!",
     Role.AYGOQCHI: "🔴 Mafiya jamoasi. Har kecha 1 nafar o'yinchini tanlaysiz va uning *aniq rolini bilib olasiz*. Natija Mafiya jamoasiga yuboriladi. Hech kimni o'ldirmaysiz.",
     Role.KOLDUN: "⚪ Mustaqil. Har kecha 1 nafar o'yinchini tanlaysiz:\n🔵 *Fuqaro bo'lsa* — ertangi osilishdan himoyalanadi.\n🔴 *Mafiya yoki Mustaqil bo'lsa* — shu kechasi halok bo'ladi.\nDoktor himoyasi saqlanadi.",
 }
@@ -182,6 +182,7 @@ class Player:
     hp: int = 100  # 0–100; used by Qaroqchi damage system
     gazabkor_targets: list = field(default_factory=list)
     joker_won: bool = False
+    doctor_self_heal_used: bool = False
 
     @property
     def display_name(self) -> str:
@@ -283,6 +284,20 @@ class Game:
         p = self.players.get(uid)
         if p:
             p.alive = False
+
+    def promote_new_don(self, dead_role: Role) -> Optional["Player"]:
+        """If the Don just left the game (killed, lynched, kicked, or quit —
+        any way at all), promote a random surviving Mafia member to Don.
+        Returns the newly-promoted player, or None if nothing to promote."""
+        if dead_role != Role.DON:
+            return None
+        alive_mafia = [p for p in self.alive_players() if p.role == Role.MAFIA]
+        if not alive_mafia:
+            return None
+        import random as _random
+        new_don = _random.choice(alive_mafia)
+        new_don.role = Role.DON
+        return new_don
 
     def assign_roles(self, disabled_roles: Optional[set] = None):
         roles = get_role_list(len(self.players), disabled_roles)
